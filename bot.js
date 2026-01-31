@@ -4,7 +4,8 @@ import sqlite3 from 'better-sqlite3';
 import 'dotenv/config';
 
 // ==================== КОНФИГУРАЦИЯ ====================
-const ADMIN_USER_IDS = [131918408];
+//const ADMIN_USER_IDS = [131918408];
+const ADMIN_USER_IDS = process.env.ADMIN_USER_IDS
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://qweasader.github.io/cybervillage_defend/';
