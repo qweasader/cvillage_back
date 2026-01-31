@@ -15,7 +15,7 @@ if (!TELEGRAM_BOT_TOKEN) {
   throw new Error('❌ TELEGRAM_BOT_TOKEN не установлен! Добавьте его в переменные окружения Railway.');
 }
 
-if (ADMIN_USER_IDS.length === 0 || ADMIN_USER_IDS[0] === 131918408) {
+if (ADMIN_USER_IDS.length === 0 || ADMIN_USER_IDS[0] === 123456789) {
   throw new Error('❌ ADMIN_USER_IDS не настроен! Замените 123456789 на ваш реальный Telegram ID в начале файла bot.js');
 }
 
