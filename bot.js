@@ -8,8 +8,8 @@ import 'dotenv/config';
 // ==================== КОНФИГУРАЦИЯ ====================
 // ⚠️ ЗАМЕНИТЕ ЭТИ ЗНАЧЕНИЯ НА СВОИ!
 const ADMIN_USER_IDS = [
-  123456789,   // ← ВАШ Telegram ID (получите через @userinfobot)
-  987654321    // ← дополнительные админы (опционально)
+     131918408// ← ВАШ Telegram ID (получите через @userinfobot)
+      // ← дополнительные админы (опционально)
 ];
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
