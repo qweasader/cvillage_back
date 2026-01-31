@@ -322,10 +322,10 @@ async function showAdminDashboard(ctx) {
   // ИСПРАВЛЕНО: правильный формат клавиатуры
   const keyboard = {
     inline_keyboard: [
-      [{ text: '📝 Задания', callback_ 'admin_missions' }],
-      [{ text: '🔑 Пароли локаций', callback_ 'admin_passwords' }],
-      [{ text: '💡 Подсказки', callback_ 'admin_hints' }],
-      [{ text: '📊 Статистика', callback_ 'admin_stats' }]
+      [{ text: '📝 Задания', callback_data: 'admin_missions' }],
+      [{ text: '🔑 Пароли локаций', callback_data: 'admin_passwords' }],
+      [{ text: '💡 Подсказки', callback_data: 'admin_hints' }],
+      [{ text: '📊 Статистика', callback_data: 'admin_stats' }]
     ]
   };
   
