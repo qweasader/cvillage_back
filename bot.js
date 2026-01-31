@@ -6,7 +6,7 @@ import 'dotenv/config';
 
 // ==================== КОНФИГУРАЦИЯ ====================
 // ⚠️ ЗАМЕНИТЕ НА ВАШ РЕАЛЬНЫЙ TELEGRAM ID!
-const ADMIN_USER_IDS = process.env.ADMIN_USER_IDS
+const ADMIN_USER_IDS = process.env.ADMIN_USER_IDS;
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://qweasader.github.io/cybervillage_defend/';
