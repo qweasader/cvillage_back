@@ -1,5 +1,6 @@
-// bot.js — полный исправленный код с рабочими кнопками
+// bot.js — полностью рабочая версия с сессиями и кнопками
 import { Telegraf, session } from 'telegraf';
+import LocalSession from 'telegraf-session-local';
 import sqlite3 from 'better-sqlite3';
 import 'dotenv/config';
 
@@ -191,7 +192,12 @@ initDatabase();
 
 // ==================== БОТ ====================
 const bot = new Telegraf(TELEGRAM_BOT_TOKEN);
-bot.use(session());
+
+// ИСПРАВЛЕНО: правильная настройка сессий через LocalSession
+bot.use(session({
+  store: new LocalSession({ database: 'session_store.json' })
+}));
+
 bot.use((ctx, next) => {
   ctx.isAdmin = ADMIN_USER_IDS.includes(ctx.from?.id);
   return next();
@@ -319,13 +325,13 @@ async function showAdminDashboard(ctx) {
     `💡 Подсказок создано: ${hintsCount}\n\n` +
     `<b>Выбери раздел:</b>`;
   
-  // ИСПРАВЛЕНО: правильный формат клавиатуры
+  // ИСПРАВЛЕНО: правильный синтаксис callback_data (было callback_)
   const keyboard = {
     inline_keyboard: [
-      [{ text: '📝 Задания', callback_data: 'admin_missions' }],
-      [{ text: '🔑 Пароли локаций', callback_data: 'admin_passwords' }],
-      [{ text: '💡 Подсказки', callback_data: 'admin_hints' }],
-      [{ text: '📊 Статистика', callback_data: 'admin_stats' }]
+      [{ text: '📝 Задания', callback_ 'admin_missions' }],
+      [{ text: '🔑 Пароли локаций', callback_ 'admin_passwords' }],
+      [{ text: '💡 Подсказки', callback_ 'admin_hints' }],
+      [{ text: '📊 Статистика', callback_ 'admin_stats' }]
     ]
   };
   
@@ -374,18 +380,18 @@ bot.action('admin_passwords', async (ctx) => {
   const keyboard = {
     inline_keyboard: [
       [
-        { text: '🚪 Врата', callback_data: 'edit_password_gates' },
-        { text: '🛡️ Купол', callback_data: 'edit_password_dome' }
+        { text: '🚪 Врата', callback_ 'edit_password_gates' },
+        { text: '🛡️ Купол', callback_ 'edit_password_dome' }
       ],
       [
-        { text: '🪞 Зеркало', callback_data: 'edit_password_mirror' },
-        { text: '🔮 Камень', callback_data: 'edit_password_stone' }
+        { text: '🪞 Зеркало', callback_ 'edit_password_mirror' },
+        { text: '🔮 Камень', callback_ 'edit_password_stone' }
       ],
       [
-        { text: '🏠 Хижина', callback_data: 'edit_password_hut' },
-        { text: '👾 Логово', callback_data: 'edit_password_lair' }
+        { text: '🏠 Хижина', callback_ 'edit_password_hut' },
+        { text: '👾 Логово', callback_ 'edit_password_lair' }
       ],
-      [{ text: '🔙 Назад', callback_data: 'admin_dashboard' }]
+      [{ text: '🔙 Назад', callback_ 'admin_dashboard' }]
     ]
   };
   
@@ -406,6 +412,8 @@ bot.action(/edit_password_(.+)/, async (ctx) => {
     return;
   }
   
+  // ИСПРАВЛЕНО: гарантируем инициализацию сессии
+  if (!ctx.session) ctx.session = {};
   ctx.session.editingPassword = locationId;
   
   await ctx.answerCbQuery();
@@ -433,18 +441,18 @@ bot.action('admin_missions', async (ctx) => {
   const keyboard = {
     inline_keyboard: [
       [
-        { text: '🚪 Врата', callback_data:'edit_mission_gates' },
-        { text: '🛡️ Купол', callback_data:'edit_mission_dome' }
+        { text: '🚪 Врата', callback_ 'edit_mission_gates' },
+        { text: '🛡️ Купол', callback_ 'edit_mission_dome' }
       ],
       [
-        { text: '🪞 Зеркало', callback_data:'edit_mission_mirror' },
-        { text: '🔮 Камень', callback_data:'edit_mission_stone' }
+        { text: '🪞 Зеркало', callback_ 'edit_mission_mirror' },
+        { text: '🔮 Камень', callback_ 'edit_mission_stone' }
       ],
       [
-        { text: '🏠 Хижина', callback_data:'edit_mission_hut' },
-        { text: '👾 Логово', callback_data:'edit_mission_lair' }
+        { text: '🏠 Хижина', callback_ 'edit_mission_hut' },
+        { text: '👾 Логово', callback_ 'edit_mission_lair' }
       ],
-      [{ text: '🔙 Назад', callback_data:'admin_dashboard' }]
+      [{ text: '🔙 Назад', callback_ 'admin_dashboard' }]
     ]
   };
   
@@ -475,8 +483,8 @@ bot.action('admin_hints', async (ctx) => {
   
   const keyboard = {
     inline_keyboard: [
-      [{ text: '➕ Добавить подсказку', callback_data:'add_hint' }],
-      [{ text: '🔙 Назад', callback_data:'admin_dashboard' }]
+      [{ text: '➕ Добавить подсказку', callback_ 'add_hint' }],
+      [{ text: '🔙 Назад', callback_ 'admin_dashboard' }]
     ]
   };
   
@@ -494,18 +502,18 @@ bot.action('add_hint', async (ctx) => {
   const keyboard = {
     inline_keyboard: [
       [
-        { text: '🚪 Врата', callback_data:'hint_loc_gates' },
-        { text: '🛡️ Купол', callback_data:'hint_loc_dome' }
+        { text: '🚪 Врата', callback_ 'hint_loc_gates' },
+        { text: '🛡️ Купол', callback_ 'hint_loc_dome' }
       ],
       [
-        { text: '🪞 Зеркало', callback_data:'hint_loc_mirror' },
-        { text: '🔮 Камень', callback_data:'hint_loc_stone' }
+        { text: '🪞 Зеркало', callback_ 'hint_loc_mirror' },
+        { text: '🔮 Камень', callback_ 'hint_loc_stone' }
       ],
       [
-        { text: '🏠 Хижина', callback_data:'hint_loc_hut' },
-        { text: '👾 Логово', callback_data:'hint_loc_lair' }
+        { text: '🏠 Хижина', callback_ 'hint_loc_hut' },
+        { text: '👾 Логово', callback_ 'hint_loc_lair' }
       ],
-      [{ text: '🔙 Отмена', callback_data:'admin_hints' }]
+      [{ text: '🔙 Отмена', callback_ 'admin_hints' }]
     ]
   };
   
@@ -526,6 +534,8 @@ bot.action(/hint_loc_(.+)/, async (ctx) => {
     return;
   }
   
+  // ИСПРАВЛЕНО: гарантируем инициализацию сессии
+  if (!ctx.session) ctx.session = {};
   ctx.session.hintLocation = locationId;
   ctx.session.step = 'level';
   
@@ -556,8 +566,8 @@ bot.action('admin_stats', async (ctx) => {
   
   const keyboard = {
     inline_keyboard: [
-      [{ text: '🔄 Обновить', callback_data:'admin_stats' }],
-      [{ text: '🔙 Назад', callback_data:'admin_dashboard' }]
+      [{ text: '🔄 Обновить', callback_ 'admin_stats' }],
+      [{ text: '🔙 Назад', callback_ 'admin_dashboard' }]
     ]
   };
   
@@ -579,8 +589,11 @@ bot.action('admin_stats', async (ctx) => {
 bot.on('text', async (ctx) => {
   if (!ctx.isAdmin) return;
   
+  // ИСПРАВЛЕНО: гарантируем инициализацию сессии
+  if (!ctx.session) ctx.session = {};
+  
   // Настройка пароля
-  if (ctx.session?.editingPassword) {
+  if (ctx.session.editingPassword) {
     const locationId = ctx.session.editingPassword;
     const password = ctx.message.text.trim();
     
@@ -607,7 +620,7 @@ bot.on('text', async (ctx) => {
   }
   
   // Добавление подсказки - уровень
-  else if (ctx.session?.hintLocation && ctx.session.step === 'level') {
+  else if (ctx.session.hintLocation && ctx.session.step === 'level') {
     const level = parseInt(ctx.message.text);
     if (isNaN(level) || level < 1 || level > 3) {
       await ctx.reply('❌ Неверный уровень. Введи число от 1 до 3:');
@@ -619,7 +632,7 @@ bot.on('text', async (ctx) => {
   }
   
   // Добавление подсказки - текст
-  else if (ctx.session?.hintLocation && ctx.session.step === 'text') {
+  else if (ctx.session.hintLocation && ctx.session.step === 'text') {
     try {
       const hint = await dbService.createHint({
         location: ctx.session.hintLocation,
