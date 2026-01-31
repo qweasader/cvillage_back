@@ -1,10 +1,10 @@
-// bot.js — полностью рабочая админ-панель с колбэками
-import { Telegraf, session, Markup } from 'telegraf';
+// bot.js — полный исправленный код с рабочими кнопками
+import { Telegraf, session } from 'telegraf';
 import sqlite3 from 'better-sqlite3';
 import 'dotenv/config';
 
 // ==================== КОНФИГУРАЦИЯ ====================
-//const ADMIN_USER_IDS = [131918408];
+// ⚠️ ЗАМЕНИТЕ НА ВАШ РЕАЛЬНЫЙ TELEGRAM ID!
 const ADMIN_USER_IDS = process.env.ADMIN_USER_IDS
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -297,8 +297,8 @@ bot.command('admin', async (ctx) => {
   await dbService.logEvent('admin_dashboard_viewed', ctx.from.id);
 });
 
-// Админ-панель
-// Админ-панель — ИСПРАВЛЕННАЯ ВЕРСИЯ С РАБОЧИМИ КНОПКАМИ
+// ============ АДМИН-ПАНЕЛЬ С РАБОЧИМИ КНОПКАМИ ============
+
 async function showAdminDashboard(ctx) {
   const [missions, passwords] = await Promise.all([
     dbService.getAllMissions(),
@@ -349,8 +349,6 @@ async function showAdminDashboard(ctx) {
   }
 }
 
-// ============ ИСПРАВЛЕННЫЕ ОБРАБОТЧИКИ КОЛБЭКОВ ============
-
 // Главное меню
 bot.action('admin_dashboard', async (ctx) => {
   if (!ctx.isAdmin) return;
@@ -358,7 +356,7 @@ bot.action('admin_dashboard', async (ctx) => {
   await ctx.answerCbQuery();
 });
 
-// Раздел "Пароли" — САМЫЙ ВАЖНЫЙ ДЛЯ НАЧАЛА
+// Раздел "Пароли"
 bot.action('admin_passwords', async (ctx) => {
   if (!ctx.isAdmin) return;
   
@@ -371,9 +369,8 @@ bot.action('admin_passwords', async (ctx) => {
     msg += `${status} ${locData.emoji} ${locData.name}: ${pwd?.password || '<i>не задан</i>'}\n`;
   });
   
-  msg += `\n<b>Выбери локацию для настройки пароля:</b>`;
+  msg += `\n<b>Выбери локацию:</b>`;
   
-  // ИСПРАВЛЕНО: правильный формат кнопок
   const keyboard = {
     inline_keyboard: [
       [
@@ -399,7 +396,7 @@ bot.action('admin_passwords', async (ctx) => {
   await ctx.answerCbQuery();
 });
 
-// Редактирование пароля для конкретной локации
+// Редактирование пароля
 bot.action(/edit_password_(.+)/, async (ctx) => {
   if (!ctx.isAdmin) return;
   
@@ -414,7 +411,7 @@ bot.action(/edit_password_(.+)/, async (ctx) => {
   await ctx.answerCbQuery();
   await ctx.replyWithHTML(
     `🔑 <b>Установка пароля для "${LOCATIONS[locationId].name}"</b>\n\n` +
-    `Отправь мне пароль (минимум 4 символа), который будет размещён на локации в виде QR-кода:`
+    `Отправь мне пароль (минимум 4 символа), который будет размещён на локации:`
   );
 });
 
@@ -431,7 +428,7 @@ bot.action('admin_missions', async (ctx) => {
     msg += `${status} ${locData.emoji} ${locData.name}\n`;
   });
   
-  msg += `\n<b>Выбери локацию для редактирования:</b>`;
+  msg += `\n<b>Выбери локацию:</b>`;
   
   const keyboard = {
     inline_keyboard: [
@@ -490,7 +487,7 @@ bot.action('admin_hints', async (ctx) => {
   await ctx.answerCbQuery();
 });
 
-// Добавление подсказки — выбор локации
+// Добавление подсказки
 bot.action('add_hint', async (ctx) => {
   if (!ctx.isAdmin) return;
   
@@ -577,218 +574,7 @@ bot.action('admin_stats', async (ctx) => {
   await ctx.answerCbQuery();
 });
 
-// ============ ОБРАБОТЧИКИ КОЛБЭКОВ ============
-
-// Главное меню
-bot.action('admin_dashboard', async (ctx) => {
-  if (!ctx.isAdmin) return;
-  await ctx.answerCbQuery();
-  await showAdminDashboard(ctx);
-});
-
-// Раздел "Задания"
-bot.action('admin_missions', async (ctx) => {
-  if (!ctx.isAdmin) return;
-  
-  const missions = await dbService.getAllMissions();
-  
-  let message = `📝 <b>Задания локаций</b>\n\n`;
-  Object.entries(LOCATIONS).forEach(([locId, locData]) => {
-    const mission = missions.find(m => m.location === locId);
-    const status = mission ? '✅' : '❌';
-    message += `${status} ${locData.emoji} ${locData.name}\n`;
-  });
-  
-  message += `\nВыбери локацию для редактирования:`;
-  
-  const buttons = Object.entries(LOCATIONS).map(([locId, locData]) => 
-    Markup.button.callback(`${locData.emoji} ${locData.name}`, `edit_mission_${locId}`)
-  );
-  
-  const keyboard = Markup.inlineKeyboard([
-    [buttons[0], buttons[1]],
-    [buttons[2], buttons[3]],
-    [buttons[4], buttons[5]],
-    [Markup.button.callback('🔙 Назад', 'admin_dashboard')]
-  ]);
-  
-  await ctx.answerCbQuery();
-  await ctx.editMessageText(message, {
-    parse_mode: 'HTML',
-    reply_markup: keyboard
-  });
-});
-
-// Редактирование задания (заглушка для демонстрации)
-bot.action(/^edit_mission_(.+)$/, async (ctx) => {
-  if (!ctx.isAdmin) return;
-  
-  const locationId = ctx.match[1];
-  ctx.session.editingMission = locationId;
-  ctx.session.step = 'text';
-  
-  await ctx.answerCbQuery();
-  await ctx.replyWithHTML(
-    `✏️ <b>Редактирование задания</b>\n` +
-    `Локация: <b>${LOCATIONS[locationId].name}</b>\n\n` +
-    `1️⃣ Введи текст задания:`
-  );
-});
-
-// Раздел "Пароли"
-bot.action('admin_passwords', async (ctx) => {
-  if (!ctx.isAdmin) return;
-  
-  const passwords = await dbService.getAllPasswords();
-  
-  let message = `🔑 <b>Пароли доступа к локациям</b>\n\n`;
-  Object.entries(LOCATIONS).forEach(([locId, locData]) => {
-    const pwd = passwords.find(p => p.location === locId);
-    const status = pwd ? '✅' : '❌';
-    message += `${status} ${locData.emoji} ${locData.name}: ${pwd?.password || '<i>не задан</i>'}\n`;
-  });
-  
-  message += `\nВыбери локацию для изменения пароля:`;
-  
-  const buttons = Object.entries(LOCATIONS).map(([locId, locData]) => 
-    Markup.button.callback(`${locData.emoji} ${locData.name}`, `edit_password_${locId}`)
-  );
-  
-  const keyboard = Markup.inlineKeyboard([
-    [buttons[0], buttons[1]],
-    [buttons[2], buttons[3]],
-    [buttons[4], buttons[5]],
-    [Markup.button.callback('🔙 Назад', 'admin_dashboard')]
-  ]);
-  
-  await ctx.answerCbQuery();
-  await ctx.editMessageText(message, {
-    parse_mode: 'HTML',
-    reply_markup: keyboard
-  });
-});
-
-// Редактирование пароля
-bot.action(/^edit_password_(.+)$/, async (ctx) => {
-  if (!ctx.isAdmin) return;
-  
-  const locationId = ctx.match[1];
-  ctx.session.editingPassword = locationId;
-  
-  await ctx.answerCbQuery();
-  await ctx.replyWithHTML(
-    `🔑 <b>Изменение пароля</b>\n` +
-    `Локация: <b>${LOCATIONS[locationId].name}</b>\n\n` +
-    `Введи <b>новый пароль</b> для доступа к локации:`
-  );
-});
-
-// Раздел "Подсказки"
-bot.action('admin_hints', async (ctx) => {
-  if (!ctx.isAdmin) return;
-  
-  const allHints = await Promise.all(
-    Object.keys(LOCATIONS).map(async loc => ({
-      location: loc,
-      count: (await dbService.getHintsForLocation(loc)).length
-    }))
-  );
-  
-  let message = `💡 <b>Управление подсказками</b>\n\n`;
-  allHints.forEach(h => {
-    message += `${LOCATIONS[h.location].emoji} ${LOCATIONS[h.location].name}: ${h.count} подсказок\n`;
-  });
-  
-  message += `\nВыбери действие:`;
-  
-  const keyboard = Markup.inlineKeyboard([
-    [Markup.button.callback('➕ Добавить подсказку', 'add_hint')],
-    [Markup.button.callback('🔙 Назад', 'admin_dashboard')]
-  ]);
-  
-  await ctx.answerCbQuery();
-  await ctx.editMessageText(message, {
-    parse_mode: 'HTML',
-    reply_markup: keyboard
-  });
-});
-
-// Добавление подсказки - выбор локации
-bot.action('add_hint', async (ctx) => {
-  if (!ctx.isAdmin) return;
-  
-  const buttons = Object.entries(LOCATIONS).map(([locId, locData]) => 
-    Markup.button.callback(`${locData.emoji} ${locData.name}`, `hint_loc_${locId}`)
-  );
-  
-  const keyboard = Markup.inlineKeyboard([
-    [buttons[0], buttons[1]],
-    [buttons[2], buttons[3]],
-    [buttons[4], buttons[5]],
-    [Markup.button.callback('🔙 Отмена', 'admin_hints')]
-  ]);
-  
-  await ctx.answerCbQuery();
-  await ctx.replyWithHTML(
-    `➕ <b>Добавление подсказки</b>\n\nВыбери локацию:`,
-    { reply_markup: keyboard }
-  );
-});
-
-// Выбор локации для подсказки
-bot.action(/^hint_loc_(.+)$/, async (ctx) => {
-  if (!ctx.isAdmin) return;
-  
-  const locationId = ctx.match[1];
-  ctx.session.hintLocation = locationId;
-  ctx.session.step = 'level';
-  
-  await ctx.answerCbQuery();
-  await ctx.replyWithHTML(
-    `🔢 <b>Уровень подсказки</b>\n\n` +
-    `Введи уровень детализации (1-3):\n` +
-    `1️⃣ - Общая подсказка\n` +
-    `2️⃣ - Конкретная подсказка\n` +
-    `3️⃣ - Детальная подсказка`
-  );
-});
-
-// Раздел "Статистика"
-bot.action('admin_stats', async (ctx) => {
-  if (!ctx.isAdmin) return;
-  
-  const stats = await dbService.getAdminStats();
-  
-  let message = `📊 <b>Статистика квеста</b>\n\n`;
-  message += `👥 Всего игроков: ${stats.totalPlayers}\n`;
-  message += `🏆 Завершили квест: ${stats.completedPlayers}\n\n`;
-  
-  message += `<b>Последние события:</b>\n`;
-  stats.recentEvents.slice(0, 5).forEach(event => {
-    const time = new Date(event.created_at).toLocaleTimeString('ru-RU');
-    message += `\n▫️ ${time} | ${event.type}`;
-    if (event.location) message += ` | ${LOCATIONS[event.location]?.name || event.location}`;
-  });
-  
-  const keyboard = Markup.inlineKeyboard([
-    [Markup.button.callback('🔄 Обновить', 'admin_stats')],
-    [Markup.button.callback('🔙 Назад', 'admin_dashboard')]
-  ]);
-  
-  await ctx.answerCbQuery();
-  try {
-    await ctx.editMessageText(message, {
-      parse_mode: 'HTML',
-      reply_markup: keyboard
-    });
-  } catch (e) {
-    if (!e.description?.includes('message is not modified')) {
-      console.error('Stats update error:', e);
-    }
-  }
-});
-
-// ============ ОБРАБОТКА ТЕКСТА (пароли, подсказки) ============
+// ============ ОБРАБОТКА ТЕКСТА ============
 
 bot.on('text', async (ctx) => {
   if (!ctx.isAdmin) return;
@@ -809,15 +595,14 @@ bot.on('text', async (ctx) => {
       await ctx.replyWithHTML(
         `✅ <b>Пароль установлен!</b>\n\n` +
         `Локация: ${LOCATIONS[locationId].name}\n` +
-        `Пароль: <code>${password}</code>\n\n` +
-        `<i>⚠️ Размести этот пароль на территории локации</i>`
+        `Пароль: <code>${password}</code>`
       );
       
       delete ctx.session.editingPassword;
       await showAdminDashboard(ctx);
     } catch (error) {
       console.error('Password save error:', error);
-      await ctx.replyWithHTML(`❌ Ошибка сохранения: ${error.message}`);
+      await ctx.replyWithHTML(`❌ Ошибка: ${error.message}`);
     }
   }
   
@@ -855,53 +640,7 @@ bot.on('text', async (ctx) => {
       await showAdminDashboard(ctx);
     } catch (error) {
       console.error('Hint save error:', error);
-      await ctx.replyWithHTML(`❌ Ошибка создания подсказки: ${error.message}`);
-    }
-  }
-  
-  // Настройка задания - текст
-  else if (ctx.session?.editingMission && ctx.session.step === 'text') {
-    ctx.session.missionText = ctx.message.text;
-    ctx.session.step = 'answer';
-    await ctx.replyWithHTML(`2️⃣ Введи <b>правильный ответ</b> на задание:`);
-  }
-  
-  // Настройка задания - ответ
-  else if (ctx.session?.editingMission && ctx.session.step === 'answer') {
-    ctx.session.missionAnswer = ctx.message.text;
-    ctx.session.step = 'image';
-    await ctx.replyWithHTML(
-      `3️⃣ Введи <b>URL изображения</b> для задания (или "-" для пропуска):\n` +
-      `<i>Рекомендуется: изображение 800x600px, JPG/PNG</i>`
-    );
-  }
-  
-  // Настройка задания - изображение
-  else if (ctx.session?.editingMission && ctx.session.step === 'image') {
-    const imageUrl = ctx.message.text !== '-' ? ctx.message.text : null;
-    
-    try {
-      await dbService.setMission(ctx.session.editingMission, {
-        text: ctx.session.missionText,
-        answer: ctx.session.missionAnswer,
-        imageUrl: imageUrl
-      });
-      
-      await ctx.replyWithHTML(
-        `✅ <b>Задание сохранено!</b>\n\n` +
-        `Локация: ${LOCATIONS[ctx.session.editingMission].name}\n` +
-        `Текст: ${ctx.session.missionText.substring(0, 50)}...\n` +
-        `Ответ: ${ctx.session.missionAnswer}`
-      );
-      
-      delete ctx.session.editingMission;
-      delete ctx.session.step;
-      delete ctx.session.missionText;
-      delete ctx.session.missionAnswer;
-      await showAdminDashboard(ctx);
-    } catch (error) {
-      console.error('Mission save error:', error);
-      await ctx.replyWithHTML(`❌ Ошибка сохранения задания: ${error.message}`);
+      await ctx.replyWithHTML(`❌ Ошибка: ${error.message}`);
     }
   }
 });
