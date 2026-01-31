@@ -5,7 +5,7 @@ import 'dotenv/config';
 
 // ==================== КОНФИГУРАЦИЯ ====================
 const ADMIN_USER_IDS = [
-  123456789,   // ← ЗАМЕНИТЕ НА ВАШ РЕАЛЬНЫЙ TELEGRAM ID!
+  131918408,   // ← ЗАМЕНИТЕ НА ВАШ РЕАЛЬНЫЙ TELEGRAM ID!
 ];
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
