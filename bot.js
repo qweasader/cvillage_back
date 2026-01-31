@@ -246,4 +246,256 @@ const bot = new Telegraf(TELEGRAM_BOT_TOKEN);
 bot.use(session());
 bot.use((ctx, next) => {
   ctx.isAdmin = ADMIN_USER_IDS.includes(ctx.from?.id);
-  return
+  return next();
+});
+
+// Локации квеста
+const LOCATIONS = {
+  gates: { name: 'Врата Кибердеревни', emoji: '🚪', order: 1 },
+  dome: { name: 'Купол Защиты', emoji: '🛡️', order: 2 },
+  mirror: { name: 'Зеркало Истины', emoji: '🪞', order: 3 },
+  stone: { name: 'Камень Пророчеств', emoji: '🔮', order: 4 },
+  hut: { name: 'Хижина Хранителя', emoji: '🏠', order: 5 },
+  lair: { name: 'Логово Вируса', emoji: '👾', order: 6 }
+};
+
+// Команда /start
+bot.start(async (ctx) => {
+  await dbService.createOrUpdatePlayer(ctx.from.id, {
+    username: ctx.from.username,
+    first_name: ctx.from.first_name,
+    last_name: ctx.from.last_name
+  });
+  
+  await ctx.replyWithHTML(
+    `👋 <b>Добро пожаловать в "Защиту Кибердеревни"!</b>\n\n` +
+    `👾 Вирус "Тень Сети" атакует нашу деревню!\n` +
+    `🛡️ Твоя миссия — пройти 6 локаций и собрать все амулеты защиты.\n\n` +
+    `<b>Доступные команды:</b>\n` +
+    `/start - начать игру\n` +
+    `/hint - запросить подсказку (3 шт.)\n` +
+    `/stats - статистика`,
+    {
+      reply_markup: {
+        inline_keyboard: [[
+          {
+            text: '🚀 Начать квест',
+            web_app: { url: FRONTEND_URL }
+          }
+        ]]
+      }
+    }
+  );
+  
+  await dbService.logEvent('bot_start', ctx.from.id);
+});
+
+// Команда /stats
+bot.command('stats', async (ctx) => {
+  const player = await dbService.getPlayer(ctx.from.id);
+  
+  if (!player) {
+    await ctx.reply('Сначала начни игру командой /start');
+    return;
+  }
+  
+  const completed = JSON.parse(player.completed_locations || '[]').length;
+  const hintsLeft = MAX_HINTS - player.hints_used;
+  
+  await ctx.replyWithHTML(
+    `📊 <b>Твоя статистика</b>\n\n` +
+    `👤 Игрок: ${player.first_name || 'Неизвестно'}\n` +
+    `✅ Пройдено локаций: ${completed}/6\n` +
+    `💡 Осталось подсказок: ${hintsLeft}/${MAX_HINTS}`
+  );
+  
+  await dbService.logEvent('stats_viewed', ctx.from.id);
+});
+
+// Команда /hint
+bot.command('hint', async (ctx) => {
+  const player = await dbService.getPlayer(ctx.from.id);
+  
+  if (!player) {
+    await ctx.reply('Сначала начни игру командой /start');
+    return;
+  }
+  
+  if (player.hints_used >= MAX_HINTS) {
+    await ctx.reply('🚫 У тебя закончились подсказки!');
+    return;
+  }
+  
+  const allLocations = Object.entries(LOCATIONS)
+    .sort((a, b) => a[1].order - b[1].order)
+    .map(([id]) => id);
+  
+  const completed = JSON.parse(player.completed_locations || '[]');
+  const currentLocation = allLocations.find(loc => !completed.includes(loc)) || allLocations[0];
+  
+  const hintLevel = player.hints_used + 1;
+  const hint = await dbService.getHint(currentLocation, hintLevel);
+  
+  if (!hint) {
+    await ctx.reply('🤔 Подсказка не настроена. Обратись к организаторам.');
+    return;
+  }
+  
+  await dbService.useHint(ctx.from.id);
+  await dbService.logEvent('hint_used', ctx.from.id, currentLocation, {
+    hint_level: hintLevel,
+    hint_id: hint.id
+  });
+  
+  const hintsLeft = MAX_HINTS - (player.hints_used + 1);
+  
+  await ctx.replyWithHTML(
+    `💡 <b>Подсказка для "${LOCATIONS[currentLocation].name}"</b>\n\n` +
+    `${hint.text}\n\n` +
+    `Осталось подсказок: ${hintsLeft}/${MAX_HINTS}`
+  );
+});
+
+// Команда /admin
+bot.command('admin', async (ctx) => {
+  if (!ctx.isAdmin) {
+    await ctx.replyWithHTML(
+      `🚫 <b>Доступ запрещён</b>\n\n` +
+      `Твой ID: <code>${ctx.from.id}</code>\n` +
+      `Администраторы: ${ADMIN_USER_IDS.join(', ')}`
+    );
+    await dbService.logEvent('admin_access_denied', ctx.from.id);
+    return;
+  }
+  
+  await showAdminDashboard(ctx);
+  await dbService.logEvent('admin_dashboard_viewed', ctx.from.id);
+});
+
+// Админ-панель
+async function showAdminDashboard(ctx) {
+  const [missions, passwords] = await Promise.all([
+    dbService.getAllMissions(),
+    dbService.getAllPasswords()
+  ]);
+  
+  const hintsCount = dbService.getHintsForLocation('gates').length + 
+                     dbService.getHintsForLocation('dome').length +
+                     dbService.getHintsForLocation('mirror').length +
+                     dbService.getHintsForLocation('stone').length +
+                     dbService.getHintsForLocation('hut').length +
+                     dbService.getHintsForLocation('lair').length;
+  
+  let message = `🔧 <b>Админ-панель квеста</b>\n\n`;
+  message += `✅ Заданий настроено: ${missions.length}/6\n`;
+  message += `🔑 Паролей задано: ${passwords.length}/6\n`;
+  message += `💡 Подсказок создано: ${hintsCount}\n`;
+  message += `<b>Выбери раздел:</b>`;
+  
+  const keyboard = Markup.inlineKeyboard([
+    [Markup.button.callback('📝 Задания', 'admin_missions')],
+    [Markup.button.callback('🔑 Пароли', 'admin_passwords')],
+    [Markup.button.callback('💡 Подсказки', 'admin_hints')],
+    [Markup.button.callback('📊 Статистика', 'admin_stats')]
+  ]);
+  
+  if (ctx.callbackQuery) {
+    await ctx.editMessageText(message, {
+      parse_mode: 'HTML',
+      reply_markup: keyboard
+    });
+  } else {
+    await ctx.reply(message, {
+      parse_mode: 'HTML',
+      reply_markup: keyboard
+    });
+  }
+}
+
+// Настройка паролей
+bot.action('admin_passwords', async (ctx) => {
+  if (!ctx.isAdmin) return;
+  
+  const passwords = await dbService.getAllPasswords();
+  
+  let message = `🔑 <b>Пароли доступа к локациям</b>\n\n`;
+  Object.entries(LOCATIONS).forEach(([locId, locData]) => {
+    const pwd = passwords.find(p => p.location === locId);
+    const status = pwd ? '✅' : '❌';
+    message += `${status} ${locData.emoji} ${locData.name}: ${pwd?.password || '<i>не задан</i>'}\n`;
+  });
+  
+  message += `\nВыбери локацию:`;
+  
+  const buttons = Object.entries(LOCATIONS).map(([locId, locData]) => 
+    Markup.button.callback(`${locData.emoji} ${locData.name}`, `edit_password_${locId}`)
+  );
+  
+  const keyboard = Markup.inlineKeyboard([
+    [buttons[0], buttons[1]],
+    [buttons[2], buttons[3]],
+    [buttons[4], buttons[5]],
+    [Markup.button.callback('🔙 Назад', 'admin_dashboard')]
+  ]);
+  
+  await ctx.editMessageText(message, {
+    parse_mode: 'HTML',
+    reply_markup: keyboard
+  });
+});
+
+bot.action(/^edit_password_(.+)$/, async (ctx) => {
+  if (!ctx.isAdmin) return;
+  
+  const locationId = ctx.match[1];
+  ctx.session.editingPassword = locationId;
+  
+  await ctx.answerCbQuery();
+  await ctx.replyWithHTML(
+    `🔑 <b>Изменение пароля</b>\n` +
+    `Локация: <b>${LOCATIONS[locationId].name}</b>\n\n` +
+    `Введи <b>новый пароль</b>:`
+  );
+});
+
+bot.action('admin_dashboard', showAdminDashboard);
+
+// Обработка текста для пароля
+bot.on('text', async (ctx) => {
+  if (!ctx.isAdmin) return;
+  
+  if (ctx.session?.editingPassword) {
+    const locationId = ctx.session.editingPassword;
+    const password = ctx.message.text.trim();
+    
+    if (password.length < 4) {
+      await ctx.reply('⚠️ Пароль должен быть не менее 4 символов.');
+      return;
+    }
+    
+    try {
+      await dbService.setPassword(locationId, password);
+      
+      await ctx.replyWithHTML(
+        `✅ <b>Пароль установлен!</b>\n\n` +
+        `Локация: ${LOCATIONS[locationId].name}\n` +
+        `Пароль: <code>${password}</code>`
+      );
+      
+      delete ctx.session.editingPassword;
+      await showAdminDashboard(ctx);
+    } catch (error) {
+      console.error('Password save error:', error);
+      await ctx.replyWithHTML(`❌ Ошибка: ${error.message}`);
+    }
+  }
+});
+
+// Запуск бота
+bot.launch();
+console.log('✅ Telegram Bot запущен');
+console.log('🔧 Admin IDs:', ADMIN_USER_IDS);
+console.log('🌐 Frontend URL:', FRONTEND_URL);
+
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
