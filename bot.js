@@ -26,7 +26,7 @@ if (ADMIN_USER_IDS.length === 0 || ADMIN_USER_IDS[0] === 123456789) {
 }
 
 // ==================== БАЗА ДАННЫХ ====================
-const sqlite = sqlite3('database.sqlite', { verbose: false });
+const sqlite = sqlite3('database.sqlite');
 
 // Инициализация таблиц
 function initDatabase() {
