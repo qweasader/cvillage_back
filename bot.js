@@ -374,18 +374,18 @@ bot.action('admin_passwords', async (ctx) => {
   const keyboard = {
     inline_keyboard: [
       [
-        { text: '🚪 Врата', callback_ 'edit_password_gates' },
-        { text: '🛡️ Купол', callback_ 'edit_password_dome' }
+        { text: '🚪 Врата', callback_data: 'edit_password_gates' },
+        { text: '🛡️ Купол', callback_data: 'edit_password_dome' }
       ],
       [
-        { text: '🪞 Зеркало', callback_ 'edit_password_mirror' },
-        { text: '🔮 Камень', callback_ 'edit_password_stone' }
+        { text: '🪞 Зеркало', callback_data: 'edit_password_mirror' },
+        { text: '🔮 Камень', callback_data: 'edit_password_stone' }
       ],
       [
-        { text: '🏠 Хижина', callback_ 'edit_password_hut' },
-        { text: '👾 Логово', callback_ 'edit_password_lair' }
+        { text: '🏠 Хижина', callback_data: 'edit_password_hut' },
+        { text: '👾 Логово', callback_data: 'edit_password_lair' }
       ],
-      [{ text: '🔙 Назад', callback_ 'admin_dashboard' }]
+      [{ text: '🔙 Назад', callback_data: 'admin_dashboard' }]
     ]
   };
   
