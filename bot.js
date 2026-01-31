@@ -1,6 +1,5 @@
-// bot.js — полностью рабочая версия с сессиями и кнопками
-import { Telegraf, session } from 'telegraf';
-import LocalSession from 'telegraf-session-local';
+// bot.js — рабочая версия без файловых сессий
+import { Telegraf } from 'telegraf';
 import sqlite3 from 'better-sqlite3';
 import 'dotenv/config';
 
@@ -18,6 +17,20 @@ if (!TELEGRAM_BOT_TOKEN) {
 
 if (ADMIN_USER_IDS.length === 0 || ADMIN_USER_IDS[0] === 123456789) {
   throw new Error('❌ ADMIN_USER_IDS не настроен! Замените 123456789 на ваш реальный Telegram ID в начале файла bot.js');
+}
+
+// ==================== СЕССИИ В ПАМЯТИ (без файлов!) ====================
+const sessions = new Map();
+
+function getSession(ctx) {
+  const userId = ctx.from?.id;
+  if (!userId) return null;
+  
+  if (!sessions.has(userId)) {
+    sessions.set(userId, { data: {} });
+  }
+  
+  return sessions.get(userId).data;
 }
 
 // ==================== БАЗА ДАННЫХ ====================
@@ -193,16 +206,6 @@ initDatabase();
 // ==================== БОТ ====================
 const bot = new Telegraf(TELEGRAM_BOT_TOKEN);
 
-// ИСПРАВЛЕНО: правильная настройка сессий через LocalSession
-bot.use(session({
-  store: new LocalSession({ database: 'session_store.json' })
-}));
-
-bot.use((ctx, next) => {
-  ctx.isAdmin = ADMIN_USER_IDS.includes(ctx.from?.id);
-  return next();
-});
-
 const LOCATIONS = {
   gates: { name: 'Врата Кибердеревни', emoji: '🚪', order: 1 },
   dome: { name: 'Купол Защиты', emoji: '🛡️', order: 2 },
@@ -211,6 +214,13 @@ const LOCATIONS = {
   hut: { name: 'Хижина Хранителя', emoji: '🏠', order: 5 },
   lair: { name: 'Логово Вируса', emoji: '👾', order: 6 }
 };
+
+// Middleware для админа и сессии
+bot.use((ctx, next) => {
+  ctx.isAdmin = ADMIN_USER_IDS.includes(ctx.from?.id);
+  ctx.session = getSession(ctx);
+  return next();
+});
 
 // Команда /start
 bot.start(async (ctx) => {
@@ -303,7 +313,7 @@ bot.command('admin', async (ctx) => {
   await dbService.logEvent('admin_dashboard_viewed', ctx.from.id);
 });
 
-// ============ АДМИН-ПАНЕЛЬ С РАБОЧИМИ КНОПКАМИ ============
+// ============ АДМИН-ПАНЕЛЬ ============
 
 async function showAdminDashboard(ctx) {
   const [missions, passwords] = await Promise.all([
@@ -325,7 +335,7 @@ async function showAdminDashboard(ctx) {
     `💡 Подсказок создано: ${hintsCount}\n\n` +
     `<b>Выбери раздел:</b>`;
   
-  // ИСПРАВЛЕНО: правильный синтаксис callback_data:data (было callback_data:)
+  // ПРАВИЛЬНЫЙ СИНТАКСИС: callback_data (не callback_)
   const keyboard = {
     inline_keyboard: [
       [{ text: '📝 Задания', callback_data: 'admin_missions' }],
@@ -412,8 +422,7 @@ bot.action(/edit_password_(.+)/, async (ctx) => {
     return;
   }
   
-  // ИСПРАВЛЕНО: гарантируем инициализацию сессии
-  if (!ctx.session) ctx.session = {};
+  // Используем сессию из памяти
   ctx.session.editingPassword = locationId;
   
   await ctx.answerCbQuery();
@@ -534,8 +543,6 @@ bot.action(/hint_loc_(.+)/, async (ctx) => {
     return;
   }
   
-  // ИСПРАВЛЕНО: гарантируем инициализацию сессии
-  if (!ctx.session) ctx.session = {};
   ctx.session.hintLocation = locationId;
   ctx.session.step = 'level';
   
@@ -589,11 +596,8 @@ bot.action('admin_stats', async (ctx) => {
 bot.on('text', async (ctx) => {
   if (!ctx.isAdmin) return;
   
-  // ИСПРАВЛЕНО: гарантируем инициализацию сессии
-  if (!ctx.session) ctx.session = {};
-  
   // Настройка пароля
-  if (ctx.session.editingPassword) {
+  if (ctx.session?.editingPassword) {
     const locationId = ctx.session.editingPassword;
     const password = ctx.message.text.trim();
     
@@ -617,10 +621,11 @@ bot.on('text', async (ctx) => {
       console.error('Password save error:', error);
       await ctx.replyWithHTML(`❌ Ошибка: ${error.message}`);
     }
+    return;
   }
   
   // Добавление подсказки - уровень
-  else if (ctx.session.hintLocation && ctx.session.step === 'level') {
+  if (ctx.session?.hintLocation && ctx.session.step === 'level') {
     const level = parseInt(ctx.message.text);
     if (isNaN(level) || level < 1 || level > 3) {
       await ctx.reply('❌ Неверный уровень. Введи число от 1 до 3:');
@@ -629,10 +634,11 @@ bot.on('text', async (ctx) => {
     ctx.session.hintLevel = level;
     ctx.session.step = 'text';
     await ctx.replyWithHTML(`📝 Введи <b>текст подсказки</b> уровня ${level}:`);
+    return;
   }
   
   // Добавление подсказки - текст
-  else if (ctx.session.hintLocation && ctx.session.step === 'text') {
+  if (ctx.session?.hintLocation && ctx.session.step === 'text') {
     try {
       const hint = await dbService.createHint({
         location: ctx.session.hintLocation,
@@ -655,7 +661,14 @@ bot.on('text', async (ctx) => {
       console.error('Hint save error:', error);
       await ctx.replyWithHTML(`❌ Ошибка: ${error.message}`);
     }
+    return;
   }
+});
+
+// Обработка ошибок (чтобы бот не падал)
+bot.catch((err, ctx) => {
+  console.error(`⚠️ Error for ${ctx.updateType}:`, err.message);
+  console.error('Stack:', err.stack);
 });
 
 // Запуск бота
@@ -663,5 +676,6 @@ bot.launch();
 console.log('✅ Telegram Bot запущен');
 console.log('🔧 Admin IDs:', ADMIN_USER_IDS);
 console.log('🌐 Frontend URL:', FRONTEND_URL);
+console.log('💾 Sessions: in-memory (no file writes)');
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
