@@ -229,7 +229,7 @@ export class QuestDatabase {
     return this.db.prepare('SELECT * FROM players WHERE team_id = ? ORDER BY registered_at').all(teamId);
   }
 
-  // ============ ПАРОЛИ, ЗАДАНИЯ, ПОДСКАЗКИ (без изменений) ============
+  // ============ ПАРОЛИ, ЗАДАНИЯ, ПОДСКАЗКИ ============
   getPassword(location) {
     const row = this.db.prepare('SELECT password FROM location_passwords WHERE location = ?').get(location);
     return row ? row.password.trim() : null;
@@ -243,6 +243,10 @@ export class QuestDatabase {
     `).run(location, clean);
   }
 
+  getAllPasswords() {
+    return this.db.prepare('SELECT * FROM location_passwords').all();
+  }
+
   getMission(location) {
     return this.db.prepare('SELECT * FROM missions WHERE location = ?').get(location);
   }
@@ -252,6 +256,10 @@ export class QuestDatabase {
       INSERT OR REPLACE INTO missions (location, text, answer, image_url)
       VALUES (?, ?, ?, ?)
     `).run(location, text.trim(), answer.trim(), imageUrl || null);
+  }
+
+  getAllMissions() {
+    return this.db.prepare('SELECT * FROM missions').all();
   }
 
   getHint(location, level) {
@@ -269,6 +277,10 @@ export class QuestDatabase {
       INSERT INTO hints (location, level, text)
       VALUES (?, ?, ?)
     `).run(location, level, text.trim());
+  }
+
+  getHintsForLocation(location) {
+    return this.db.prepare('SELECT * FROM hints WHERE location = ? ORDER BY level').all(location);
   }
 
   // ============ СОБЫТИЯ ============
