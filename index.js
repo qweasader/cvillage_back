@@ -1,4 +1,4 @@
-// index.js — полная переработка с детальным логированием каждого шага
+// index.js — с детальным логированием каждого этапа обработки запроса
 import { Telegraf } from 'telegraf';
 import http from 'http';
 import { URL } from 'url';
@@ -77,39 +77,100 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ============ КРИТИЧЕСКИ ВАЖНОЕ ЛОГИРОВАНИЕ: ПОЛУЧЕНИЕ ЗАПРОСА ============
+  console.log(`\n${'='.repeat(100)}`);
+  console.log(`📡 НОВЫЙ HTTP ЗАПРОС ПОЛУЧЕН`);
+  console.log(`   Время: ${new Date().toISOString()}`);
+  console.log(`   Метод: ${req.method}`);
+  console.log(`   URL: ${req.url}`);
+  console.log(`   Pathname: ${pathname}`);
+  console.log(`   Content-Type: ${req.headers['content-type']}`);
+  console.log(`   Content-Length: ${req.headers['content-length']}`);
+  console.log(`   User-Agent: ${req.headers['user-agent']?.substring(0, 50)}`);
+  
+  // Логируем ВСЕ заголовки для отладки
+  console.log(`\n📋 ЗАГОЛОВКИ ЗАПРОСА:`);
+  Object.keys(req.headers).forEach(key => {
+    const value = req.headers[key];
+    // Обрезаем длинные значения для читаемости
+    const displayValue = typeof value === 'string' && value.length > 100 
+      ? value.substring(0, 100) + '...' 
+      : value;
+    console.log(`   ${key}: ${displayValue}`);
+  });
+
   // Извлечение userId из initData
   let userId = null;
   const initData = req.headers['x-telegram-init-data'] || '';
   
+  console.log(`\n🔑 ИЗВЛЕЧЕНИЕ USER ID ИЗ INITDATA:`);
+  console.log(`   Заголовок x-telegram-init- ${initData ? 'ПРИСУТСТВУЕТ' : 'ОТСУТСТВУЕТ'}`);
+  console.log(`   Длина initData: ${initData.length} символов`);
+  
   if (initData) {
     try {
+      console.log(`   Содержимое initData (первые 200 символов): ${initData.substring(0, 200)}`);
+      
       const params = new URLSearchParams(initData);
+      console.log(`   Параметры в initData: ${[...params.keys()].join(', ')}`);
+      
       const userParam = params.get('user');
+      console.log(`   Параметр "user": ${userParam ? 'НАЙДЕН' : 'НЕ НАЙДЕН'}`);
       
       if (userParam) {
+        console.log(`   Значение параметра "user" (первые 200 символов): ${userParam.substring(0, 200)}`);
+        
         const userObj = JSON.parse(decodeURIComponent(userParam));
         userId = String(userObj.id);
+        console.log(`   ✅ Успешно извлечен userId: ${userId}`);
+        console.log(`   Имя пользователя: ${userObj.first_name} ${userObj.last_name || ''}`);
+        console.log(`   Username: ${userObj.username || 'не указан'}`);
+      } else {
+        console.error(`   ❌ Параметр "user" не найден в initData!`);
       }
     } catch (e) {
-      console.error('❌ Ошибка парсинга initData:', e.message);
+      console.error(`   ❌ Ошибка парсинга initData:`, e.message);
+      console.error(`   Полный текст ошибки:`, e.stack);
     }
+  } else {
+    console.error(`   ❌ ЗАГОЛОВОК x-telegram-init-data ОТСУТСТВУЕТ!`);
+    console.error(`   Все заголовки запроса:`);
+    console.error(JSON.stringify(req.headers, null, 2));
   }
 
   if (!userId) {
-    console.error('❌ Не удалось извлечь userId из initData');
+    console.error(`\n❌ КРИТИЧЕСКАЯ ОШИБКА: Не удалось извлечь userId из initData`);
     res.writeHead(401, {
       'Content-Type': 'application/json',
       'Access-Control-Allow-Origin': '*'
     });
     res.end(JSON.stringify({ 
       success: false, 
-      message: 'Не авторизован. Откройте приложение через кнопку в боте!'
+      message: 'Не авторизован. Откройте приложение через кнопку в боте!',
+      debug: {
+        initDataPresent: !!initData,
+        initDataLength: initData.length,
+        headersReceived: Object.keys(req.headers)
+      }
     }));
+    console.log('='.repeat(100) + '\n');
     return;
   }
 
+  // Проверка регистрации игрока
   const player = db.getPlayer(userId);
+  console.log(`\n👤 ПРОВЕРКА РЕГИСТРАЦИИ ИГРОКА:`);
+  console.log(`   UserId: ${userId}`);
+  console.log(`   Игрок найден в БД: ${player ? 'ДА' : 'НЕТ'}`);
+  
+  if (player) {
+    console.log(`   Имя: ${player.first_name} ${player.last_name || ''}`);
+    console.log(`   Зарегистрирован: ${player.is_registered ? 'ДА' : 'НЕТ'}`);
+    console.log(`   Team ID: ${player.team_id}`);
+  }
+  
   if (!player || !player.is_registered) {
+    console.error(`   ❌ Игрок не зарегистрирован или не найден в БД!`);
     res.writeHead(403, {
       'Content-Type': 'application/json',
       'Access-Control-Allow-Origin': '*'
@@ -117,13 +178,21 @@ const server = http.createServer(async (req, res) => {
     res.end(JSON.stringify({ 
       success: false, 
       message: 'Сначала зарегистрируйтесь в боте! Напишите /start и введите код команды.',
-      requiresRegistration: true
+      requiresRegistration: true,
+      userId: userId
     }));
+    console.log('='.repeat(100) + '\n');
     return;
   }
 
+  // Получение команды игрока
   const team = db.getTeamById(player.team_id);
+  console.log(`\n🛡️  ПРОВЕРКА КОМАНДЫ:`);
+  console.log(`   Team ID: ${player.team_id}`);
+  console.log(`   Команда найдена: ${team ? 'ДА' : 'НЕТ'}`);
+  
   if (!team) {
+    console.error(`   ❌ Команда не найдена!`);
     res.writeHead(500, {
       'Content-Type': 'application/json',
       'Access-Control-Allow-Origin': '*'
@@ -132,27 +201,45 @@ const server = http.createServer(async (req, res) => {
       success: false, 
       message: 'Ошибка: команда не найдена' 
     }));
+    console.log('='.repeat(100) + '\n');
     return;
   }
+  
+  console.log(`   Название команды: ${team.name}`);
+  console.log(`   Код команды: ${team.code}`);
+  console.log(`   Завершенные локации: ${JSON.parse(team.completed_locations || '[]').length}`);
+  console.log(`   Открытые локации: ${JSON.parse(team.unlocked_locations || '["gates"]').length}`);
 
-  // Парсинг тела
+  // Парсинг тела запроса
   let body = '';
-  req.on('data', chunk => body += chunk.toString());
+  req.on('data', chunk => {
+    body += chunk.toString();
+    console.log(`   📥 Получены данные (часть ${body.length} байт):`, chunk.toString().substring(0, 100));
+  });
+  
   req.on('end', async () => {
+    console.log(`\n📦 ПОЛНОЕ ТЕЛО ЗАПРОСА ПОЛУЧЕНО:`);
+    console.log(`   Длина тела: ${body.length} байт`);
+    console.log(`   Тело (первые 500 символов): ${body.substring(0, 500)}`);
+    
     try {
       const data = body ? JSON.parse(body) : {};
-
+      console.log(`\n✅ ТЕЛО УСПЕШНО РАСПАРСЕНО:`);
+      console.log(`   location: ${data.location}`);
+      console.log(`   password: ${data.password}`);
+      console.log(`   userId: ${data.userId}`);
+      console.log(`   teamId: ${data.teamId}`);
+      
       // ПРОВЕРКА ПАРОЛЯ — ПОЛНОСТЬЮ ПЕРЕДЕЛАНАЯ ВЕРСИЯ С МАКСИМАЛЬНЫМ ЛОГИРОВАНИЕМ
       if (pathname === '/check-password' && req.method === 'POST') {
         const { location, password } = data;
         
         // ============ ЭТАП 1: ПОЛУЧЕНИЕ ДАННЫХ ИЗ ЗАПРОСА ============
-        console.log(`\n${'='.repeat(80)}`);
-        console.log(`🔐 [ПРОВЕРКА ПАРОЛЯ] Новый запрос`);
-        console.log(`   Время: ${new Date().toISOString()}`);
-        console.log(`   Локация: "${location}"`);
-        console.log(`   Пароль (как пришел): "${password}"`);
-        console.log(`   Длина пароля: ${password ? password.length : 0} символов`);
+        console.log(`\n${'─'.repeat(80)}`);
+        console.log(`🔐 [ПРОВЕРКА ПАРОЛЯ] Начало обработки`);
+        console.log(`   Локация из запроса: "${location}"`);
+        console.log(`   Пароль из запроса: "${password}" (длина: ${password ? password.length : 0})`);
+        console.log(`   Пароль в HEX (первые 20 байт): ${password ? Buffer.from(password.substring(0, 20)).toString('hex') : 'N/A'}`);
         
         // Проверка наличия данных
         if (!location || !password) {
@@ -162,6 +249,7 @@ const server = http.createServer(async (req, res) => {
             'Access-Control-Allow-Origin': '*'
           });
           res.end(JSON.stringify({ success: false, message: 'Не указаны локация или пароль' }));
+          console.log('─'.repeat(80) + '\n');
           return;
         }
 
@@ -171,9 +259,9 @@ const server = http.createServer(async (req, res) => {
         const nextLocationIndex = completed.length;
         const expectedLocation = ALL_LOCATIONS[nextLocationIndex] || 'gates';
         
-        console.log(`\n📍 Проверка локации:`);
-        console.log(`   Текущая локация команды: ${expectedLocation}`);
-        console.log(`   Запрошенная локация: ${location}`);
+        console.log(`\n📍 ПРОВЕРКА ЛОКАЦИИ:`);
+        console.log(`   Текущая локация команды: ${expectedLocation} (${LOCATIONS[expectedLocation].name})`);
+        console.log(`   Запрошенная локация: ${location} (${LOCATIONS[location]?.name || 'неизвестно'})`);
         console.log(`   Открытые локации: ${unlocked.join(', ')}`);
         console.log(`   Завершенные локации: ${completed.length}`);
         
@@ -188,12 +276,13 @@ const server = http.createServer(async (req, res) => {
             success: false, 
             message: `Эта локация ещё недоступна! Сначала завершите: ${expectedName}` 
           }));
+          console.log('─'.repeat(80) + '\n');
           return;
         }
         console.log(`   ✅ Локация проверена: "${location}" доступна для проверки`);
 
         // ============ ЭТАП 3: ПОЛУЧЕНИЕ ПАРОЛЯ ИЗ БД ============
-        console.log(`\n🔑 Получение пароля из базы данных...`);
+        console.log(`\n🔑 ПОЛУЧЕНИЕ ПАРОЛЯ ИЗ БАЗЫ ДАННЫХ...`);
         const passwordData = db.getPassword(location);
         
         if (!passwordData) {
@@ -206,23 +295,24 @@ const server = http.createServer(async (req, res) => {
             success: false, 
             message: 'Пароль для этой локации ещё не настроен администратором.'
           }));
+          console.log('─'.repeat(80) + '\n');
           return;
         }
         
         console.log(`   ✅ Пароль из БД получен:`);
-        console.log(`      Оригинал: "${passwordData.original}"`);
-        console.log(`      normalized: "${passwordData.normalized}"`);
+        console.log(`      Оригинал: "${passwordData.original}" (длина: ${passwordData.original.length})`);
+        console.log(`      normalized: "${passwordData.normalized}" (длина: ${passwordData.normalized.length})`);
 
         // ============ ЭТАП 4: НОРМАЛИЗАЦИЯ ВВЕДЕННОГО ПАРОЛЯ ============
-        console.log(`\n✏️ Нормализация введенного пароля...`);
+        console.log(`\n✏️  НОРМАЛИЗАЦИЯ ВВЕДЕННОГО ПАРОЛЯ...`);
         const cleanInput = password.trim();
         console.log(`   После trim: "${cleanInput}" (длина: ${cleanInput.length})`);
         
         const normalizedInput = db.normalizePassword(cleanInput);
-        console.log(`   Нормализованный ввод: "${normalizedInput}"`);
+        console.log(`   Нормализованный ввод: "${normalizedInput}" (длина: ${normalizedInput.length})`);
 
         // ============ ЭТАП 5: СРАВНЕНИЕ ============
-        console.log(`\n⚖️ Сравнение паролей:`);
+        console.log(`\n⚖️  СРАВНЕНИЕ ПАРОЛЕЙ:`);
         console.log(`   Введенный (нормализ.): "${normalizedInput}"`);
         console.log(`   Из БД (нормализ.):    "${passwordData.normalized}"`);
         console.log(`   Длина введенного: ${normalizedInput.length}`);
@@ -233,9 +323,9 @@ const server = http.createServer(async (req, res) => {
           let diffFound = false;
           for (let i = 0; i < normalizedInput.length; i++) {
             if (normalizedInput[i] !== passwordData.normalized[i]) {
-              console.log(`   ⚠️ Различие на позиции ${i}:`);
-              console.log(`      Введенный: "${normalizedInput[i]}" (код ${normalizedInput.charCodeAt(i)})`);
-              console.log(`      Из БД:     "${passwordData.normalized[i]}" (код ${passwordData.normalized.charCodeAt(i)})`);
+              console.log(`   ⚠️  Различие на позиции ${i}:`);
+              console.log(`      Введенный: "${normalizedInput[i]}" (код ${normalizedInput.charCodeAt(i)}, hex ${normalizedInput.charCodeAt(i).toString(16)})`);
+              console.log(`      Из БД:     "${passwordData.normalized[i]}" (код ${passwordData.normalized.charCodeAt(i)}, hex ${passwordData.normalized.charCodeAt(i).toString(16)})`);
               diffFound = true;
               break;
             }
@@ -244,16 +334,17 @@ const server = http.createServer(async (req, res) => {
             console.log(`   ✅ Все символы совпадают`);
           }
         } else {
-          console.log(`   ⚠️ Длины не совпадают!`);
+          console.log(`   ⚠️  Длины не совпадают!`);
+          console.log(`      Разница: ${Math.abs(normalizedInput.length - passwordData.normalized.length)} символов`);
         }
         
         const isCorrect = normalizedInput === passwordData.normalized;
-        console.log(`\n✅ Результат проверки: ${isCorrect ? 'ВЕРНО' : 'НЕВЕРНО'}`);
+        console.log(`\n✅ РЕЗУЛЬТАТ ПРОВЕРКИ: ${isCorrect ? 'ВЕРНО ✅' : 'НЕВЕРНО ❌'}`);
 
         // ============ ЭТАП 6: ОТПРАВКА ОТВЕТА ============
         if (isCorrect) {
           db.logEvent('location_unlocked', team.id, location, { userId });
-          console.log(`\n🎉 Пароль ВЕРНЫЙ! Локация разблокирована.`);
+          console.log(`\n🎉 ПАРОЛЬ ВЕРНЫЙ! Локация разблокирована.`);
           
           res.writeHead(200, {
             'Content-Type': 'application/json',
@@ -273,7 +364,7 @@ const server = http.createServer(async (req, res) => {
             normalized: normalizedInput
           });
           
-          console.log(`\n❌ Пароль НЕВЕРНЫЙ!`);
+          console.log(`\n❌ ПАРОЛЬ НЕВЕРНЫЙ!`);
           console.log(`   Подробности для отладки:`);
           console.log(`      Введено (оригинал): "${password}"`);
           console.log(`      Введено (после trim): "${cleanInput}"`);
@@ -301,7 +392,8 @@ const server = http.createServer(async (req, res) => {
           }));
         }
         
-        console.log(`${'='.repeat(80)}\n`);
+        console.log('─'.repeat(80));
+        console.log('='.repeat(100) + '\n');
         return;
       }
 
@@ -499,13 +591,14 @@ const server = http.createServer(async (req, res) => {
       });
       res.end(JSON.stringify({ error: 'Not found' }));
     } catch (error) {
-      console.error('❌ Ошибка сервера:', error);
+      console.error('❌ ОШИБКА ОБРАБОТКИ ЗАПРОСА:', error);
       console.error('Стек:', error.stack);
       res.writeHead(500, {
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*'
       });
       res.end(JSON.stringify({ error: 'Internal server error' }));
+      console.log('='.repeat(100) + '\n');
     }
   });
 });
@@ -520,7 +613,7 @@ bot.start(async (ctx) => {
   const player = db.getPlayer(ctx.from.id);
   const isRegistered = player && player.is_registered;
   
-  const adminButton = ctx.isAdmin ? [{ text: '🔧 Админ-панель', callback_data:'admin_panel' }] : [];
+  const adminButton = ctx.isAdmin ? [{ text: '🔧 Админ-панель', callback_data: 'admin_panel' }] : [];
   
   if (isRegistered) {
     const team = db.getTeamById(player.team_id);
@@ -533,8 +626,8 @@ bot.start(async (ctx) => {
         reply_markup: {
           inline_keyboard: [
             [{ text: '🚀 Начать квест', web_app: { url: `${FRONTEND_URL}?team=${team.code}` } }],
-            [{ text: '📊 Статистика команды', callback_data:'team_stats' }],
-            [{ text: '👥 Состав команды', callback_data:'team_members' }],
+            [{ text: '📊 Статистика команды', callback_data: 'team_stats' }],
+            [{ text: '👥 Состав команды', callback_data: 'team_members' }],
             ...adminButton
           ]
         }
@@ -552,9 +645,9 @@ bot.start(async (ctx) => {
       {
         reply_markup: {
           inline_keyboard: [
-            [{ text: '🔧 Админ-панель', callback_data:'admin_panel' }],
-            [{ text: '🆕 Создать команду', callback_data:'create_new_team' }],
-            [{ text: '❓ Как создать команду?', callback_data:'how_to_create' }]
+            [{ text: '🔧 Админ-панель', callback_data: 'admin_panel' }],
+            [{ text: '🆕 Создать команду', callback_data: 'create_new_team' }],
+            [{ text: '❓ Как создать команду?', callback_data: 'how_to_create' }]
           ]
         }
       }
@@ -574,8 +667,8 @@ bot.start(async (ctx) => {
     {
       reply_markup: {
         inline_keyboard: [
-          [{ text: '🆕 Создать новую команду', callback_data:'create_new_team' }],
-          [{ text: '❓ Как создать команду?', callback_data:'how_to_create' }]
+          [{ text: '🆕 Создать новую команду', callback_data: 'create_new_team' }],
+          [{ text: '❓ Как создать команду?', callback_data: 'how_to_create' }]
         ]
       }
     }
@@ -616,8 +709,8 @@ bot.action('create_new_team', async (ctx) => {
       reply_markup: {
         inline_keyboard: [
           [{ text: '🚀 Начать квест', web_app: { url: `${FRONTEND_URL}?team=${teamCode}` } }],
-          [{ text: '📊 Статистика команды', callback_data:'team_stats' }],
-          [{ text: '🔧 Админ-панель', callback_data:'admin_panel' }]
+          [{ text: '📊 Статистика команды', callback_data: 'team_stats' }],
+          [{ text: '🔧 Админ-панель', callback_data: 'admin_panel' }]
         ]
       }
     }
@@ -644,7 +737,7 @@ bot.action('how_to_create', async (ctx) => {
     {
       reply_markup: {
         inline_keyboard: [
-          [{ text: '🔙 Назад', callback_data:'back_to_register' }]
+          [{ text: '🔙 Назад', callback_data: 'back_to_register' }]
         ]
       }
     }
@@ -665,9 +758,9 @@ bot.action('back_to_register', async (ctx) => {
         parse_mode: 'HTML',
         reply_markup: {
           inline_keyboard: [
-            [{ text: '🔧 Админ-панель', callback_data:'admin_panel' }],
-            [{ text: '🆕 Создать команду', callback_data:'create_new_team' }],
-            [{ text: '❓ Как создать команду?', callback_data:'how_to_create' }]
+            [{ text: '🔧 Админ-панель', callback_data: 'admin_panel' }],
+            [{ text: '🆕 Создать команду', callback_data: 'create_new_team' }],
+            [{ text: '❓ Как создать команду?', callback_data: 'how_to_create' }]
           ]
         }
       }
@@ -685,8 +778,8 @@ bot.action('back_to_register', async (ctx) => {
         parse_mode: 'HTML',
         reply_markup: {
           inline_keyboard: [
-            [{ text: '🆕 Создать новую команду', callback_data:'create_new_team' }],
-            [{ text: '❓ Как создать команду?', callback_data:'how_to_create' }]
+            [{ text: '🆕 Создать новую команду', callback_data: 'create_new_team' }],
+            [{ text: '❓ Как создать команду?', callback_data: 'how_to_create' }]
           ]
         }
       }
@@ -749,7 +842,7 @@ bot.on('text', async (ctx) => {
     delete ctx.session.registerStep;
     delete ctx.session.teamCode;
     
-    const adminButton = ctx.isAdmin ? [{ text: '🔧 Админ-панель', callback_data:'admin_panel' }] : [];
+    const adminButton = ctx.isAdmin ? [{ text: '🔧 Админ-панель', callback_data: 'admin_panel' }] : [];
     
     await ctx.replyWithHTML(
       `✅ <b>Регистрация завершена!</b>\n\n` +
@@ -761,7 +854,7 @@ bot.on('text', async (ctx) => {
         reply_markup: {
           inline_keyboard: [
             [{ text: '🚀 Начать квест', web_app: { url: `${FRONTEND_URL}?team=${team.code}` } }],
-            [{ text: '📊 Статистика команды', callback_data:'team_stats' }],
+            [{ text: '📊 Статистика команды', callback_data: 'team_stats' }],
             ...adminButton
           ]
         }
@@ -993,10 +1086,10 @@ async function showAdminMenu(ctx) {
   
   const keyboard = {
     inline_keyboard: [
-      [{ text: '🔑 Пароли доступа', callback_data:'admin_passwords' }],
-      [{ text: '📝 Задания локаций', callback_data:'admin_missions' }],
-      [{ text: '💡 Подсказки', callback_data:'admin_hints' }],
-      [{ text: '📊 Статистика', callback_data:'admin_stats' }]
+      [{ text: '🔑 Пароли доступа', callback_data: 'admin_passwords' }],
+      [{ text: '📝 Задания локаций', callback_data: 'admin_missions' }],
+      [{ text: '💡 Подсказки', callback_data: 'admin_hints' }],
+      [{ text: '📊 Статистика', callback_data: 'admin_stats' }]
     ]
   };
   
@@ -1033,18 +1126,18 @@ bot.action('admin_passwords', async (ctx) => {
   const keyboard = {
     inline_keyboard: [
       [
-        { text: '🚪 Врата', callback_data:'set_pwd_gates' },
-        { text: '🛡️ Купол', callback_data:'set_pwd_dome' }
+        { text: '🚪 Врата', callback_data: 'set_pwd_gates' },
+        { text: '🛡️ Купол', callback_data: 'set_pwd_dome' }
       ],
       [
-        { text: '🪞 Зеркало', callback_data:'set_pwd_mirror' },
-        { text: '🔮 Камень', callback_data:'set_pwd_stone' }
+        { text: '🪞 Зеркало', callback_data: 'set_pwd_mirror' },
+        { text: '🔮 Камень', callback_data: 'set_pwd_stone' }
       ],
       [
-        { text: '🏠 Хижина', callback_data:'set_pwd_hut' },
-        { text: '👾 Логово', callback_data:'set_pwd_lair' }
+        { text: '🏠 Хижина', callback_data: 'set_pwd_hut' },
+        { text: '👾 Логово', callback_data: 'set_pwd_lair' }
       ],
-      [{ text: '🔙 Назад', callback_data:'admin_main' }]
+      [{ text: '🔙 Назад', callback_data: 'admin_main' }]
     ]
   };
   
@@ -1095,18 +1188,18 @@ bot.action('admin_missions', async (ctx) => {
   const keyboard = {
     inline_keyboard: [
       [
-        { text: '🚪 Врата', callback_data:'set_mission_gates' },
-        { text: '🛡️ Купол', callback_data:'set_mission_dome' }
+        { text: '🚪 Врата', callback_data: 'set_mission_gates' },
+        { text: '🛡️ Купол', callback_data: 'set_mission_dome' }
       ],
       [
-        { text: '🪞 Зеркало', callback_data:'set_mission_mirror' },
-        { text: '🔮 Камень', callback_data:'set_mission_stone' }
+        { text: '🪞 Зеркало', callback_data: 'set_mission_mirror' },
+        { text: '🔮 Камень', callback_data: 'set_mission_stone' }
       ],
       [
-        { text: '🏠 Хижина', callback_data:'set_mission_hut' },
-        { text: '👾 Логово', callback_data:'set_mission_lair' }
+        { text: '🏠 Хижина', callback_data: 'set_mission_hut' },
+        { text: '👾 Логово', callback_data: 'set_mission_lair' }
       ],
-      [{ text: '🔙 Назад', callback_data:'admin_main' }]
+      [{ text: '🔙 Назад', callback_data: 'admin_main' }]
     ]
   };
   
@@ -1157,8 +1250,8 @@ bot.action('admin_hints', async (ctx) => {
   
   const keyboard = {
     inline_keyboard: [
-      [{ text: '➕ Добавить подсказку', callback_data:'add_hint' }],
-      [{ text: '🔙 Назад', callback_data:'admin_main' }]
+      [{ text: '➕ Добавить подсказку', callback_data: 'add_hint' }],
+      [{ text: '🔙 Назад', callback_data: 'admin_main' }]
     ]
   };
   
@@ -1175,18 +1268,18 @@ bot.action('add_hint', async (ctx) => {
   const keyboard = {
     inline_keyboard: [
       [
-        { text: '🚪 Врата', callback_data:'hint_loc_gates' },
-        { text: '🛡️ Купол', callback_data:'hint_loc_dome' }
+        { text: '🚪 Врата', callback_data: 'hint_loc_gates' },
+        { text: '🛡️ Купол', callback_data: 'hint_loc_dome' }
       ],
       [
-        { text: '🪞 Зеркало', callback_data:'hint_loc_mirror' },
-        { text: '🔮 Камень', callback_data:'hint_loc_stone' }
+        { text: '🪞 Зеркало', callback_data: 'hint_loc_mirror' },
+        { text: '🔮 Камень', callback_data: 'hint_loc_stone' }
       ],
       [
-        { text: '🏠 Хижина', callback_data:'hint_loc_hut' },
-        { text: '👾 Логово', callback_data:'hint_loc_lair' }
+        { text: '🏠 Хижина', callback_data: 'hint_loc_hut' },
+        { text: '👾 Логово', callback_data: 'hint_loc_lair' }
       ],
-      [{ text: '🔙 Отмена', callback_data:'admin_hints' }]
+      [{ text: '🔙 Отмена', callback_data: 'admin_hints' }]
     ]
   };
   
@@ -1233,8 +1326,8 @@ bot.action('admin_stats', async (ctx) => {
   
   const keyboard = {
     inline_keyboard: [
-      [{ text: '🔄 Обновить', callback_data:'admin_stats' }],
-      [{ text: '🔙 Назад', callback_data:'admin_main' }]
+      [{ text: '🔄 Обновить', callback_data: 'admin_stats' }],
+      [{ text: '🔙 Назад', callback_data: 'admin_main' }]
     ]
   };
   
