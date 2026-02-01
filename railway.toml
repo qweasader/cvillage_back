@@ -1,5 +1,5 @@
-[build]
+-[build]
 builder = "NIXPACKS"
 
 [deploy]
-startCommand = "node bot.js & node server.js"
+startCommand = "node index.js"
