@@ -392,10 +392,10 @@ async function showAdminMenu(ctx) {
   // ИСПРАВЛЕНО: правильный синтаксис всех кнопок
   const keyboard = {
     inline_keyboard: [
-      [{ text: '🔑 Пароли доступа', callback_ 'admin_passwords' }],
-      [{ text: '📝 Задания локаций', callback_ 'admin_missions' }],
-      [{ text: '💡 Подсказки', callback_ 'admin_hints' }],
-      [{ text: '📊 Статистика', callback_ 'admin_stats' }]
+      [{ text: '🔑 Пароли доступа', callback_data:'admin_passwords' }],
+      [{ text: '📝 Задания локаций', callback_data:'admin_missions' }],
+      [{ text: '💡 Подсказки', callback_data:'admin_hints' }],
+      [{ text: '📊 Статистика', callback_data:'admin_stats' }]
     ]
   };
   
@@ -433,18 +433,18 @@ bot.action('admin_passwords', async (ctx) => {
   const keyboard = {
     inline_keyboard: [
       [
-        { text: '🚪 Врата', callback_ 'set_pwd_gates' },
-        { text: '🛡️ Купол', callback_ 'set_pwd_dome' }
+        { text: '🚪 Врата', callback_data:'set_pwd_gates' },
+        { text: '🛡️ Купол', callback_data:'set_pwd_dome' }
       ],
       [
-        { text: '🪞 Зеркало', callback_ 'set_pwd_mirror' },
-        { text: '🔮 Камень', callback_ 'set_pwd_stone' }
+        { text: '🪞 Зеркало', callback_data:'set_pwd_mirror' },
+        { text: '🔮 Камень', callback_data:'set_pwd_stone' }
       ],
       [
-        { text: '🏠 Хижина', callback_ 'set_pwd_hut' },
-        { text: '👾 Логово', callback_ 'set_pwd_lair' }
+        { text: '🏠 Хижина', callback_data:'set_pwd_hut' },
+        { text: '👾 Логово', callback_data:'set_pwd_lair' }
       ],
-      [{ text: '🔙 Назад', callback_ 'admin_main' }]
+      [{ text: '🔙 Назад', callback_data:'admin_main' }]
     ]
   };
   
@@ -497,18 +497,18 @@ bot.action('admin_missions', async (ctx) => {
   const keyboard = {
     inline_keyboard: [
       [
-        { text: '🚪 Врата', callback_ 'set_mission_gates' },
-        { text: '🛡️ Купол', callback_ 'set_mission_dome' }
+        { text: '🚪 Врата', callback_data:'set_mission_gates' },
+        { text: '🛡️ Купол', callback_data:'set_mission_dome' }
       ],
       [
-        { text: '🪞 Зеркало', callback_ 'set_mission_mirror' },
-        { text: '🔮 Камень', callback_ 'set_mission_stone' }
+        { text: '🪞 Зеркало', callback_data:'set_mission_mirror' },
+        { text: '🔮 Камень', callback_data:'set_mission_stone' }
       ],
       [
-        { text: '🏠 Хижина', callback_ 'set_mission_hut' },
-        { text: '👾 Логово', callback_ 'set_mission_lair' }
+        { text: '🏠 Хижина', callback_data:'set_mission_hut' },
+        { text: '👾 Логово', callback_data:'set_mission_lair' }
       ],
-      [{ text: '🔙 Назад', callback_ 'admin_main' }]
+      [{ text: '🔙 Назад', callback_data:'admin_main' }]
     ]
   };
   
@@ -561,8 +561,8 @@ bot.action('admin_hints', async (ctx) => {
   
   const keyboard = {
     inline_keyboard: [
-      [{ text: '➕ Добавить подсказку', callback_ 'add_hint' }],
-      [{ text: '🔙 Назад', callback_ 'admin_main' }]
+      [{ text: '➕ Добавить подсказку', callback_data:'add_hint' }],
+      [{ text: '🔙 Назад', callback_data:'admin_main' }]
     ]
   };
   
@@ -580,18 +580,18 @@ bot.action('add_hint', async (ctx) => {
   const keyboard = {
     inline_keyboard: [
       [
-        { text: '🚪 Врата', callback_ 'hint_loc_gates' },
-        { text: '🛡️ Купол', callback_ 'hint_loc_dome' }
+        { text: '🚪 Врата', callback_data:'hint_loc_gates' },
+        { text: '🛡️ Купол', callback_data:'hint_loc_dome' }
       ],
       [
-        { text: '🪞 Зеркало', callback_ 'hint_loc_mirror' },
-        { text: '🔮 Камень', callback_ 'hint_loc_stone' }
+        { text: '🪞 Зеркало', callback_data:'hint_loc_mirror' },
+        { text: '🔮 Камень', callback_data:'hint_loc_stone' }
       ],
       [
-        { text: '🏠 Хижина', callback_ 'hint_loc_hut' },
-        { text: '👾 Логово', callback_ 'hint_loc_lair' }
+        { text: '🏠 Хижина', callback_data:'hint_loc_hut' },
+        { text: '👾 Логово', callback_data:'hint_loc_lair' }
       ],
-      [{ text: '🔙 Отмена', callback_ 'admin_hints' }]
+      [{ text: '🔙 Отмена', callback_data:'admin_hints' }]
     ]
   };
   
@@ -639,8 +639,8 @@ bot.action('admin_stats', async (ctx) => {
   
   const keyboard = {
     inline_keyboard: [
-      [{ text: '🔄 Обновить', callback_ 'admin_stats' }],
-      [{ text: '🔙 Назад', callback_ 'admin_main' }]
+      [{ text: '🔄 Обновить', callback_data:'admin_stats' }],
+      [{ text: '🔙 Назад', callback_data:'admin_main' }]
     ]
   };
   
