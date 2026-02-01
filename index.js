@@ -389,9 +389,9 @@ bot.command('admin', async (ctx) => {
   // ПРАВИЛЬНЫЙ СИНТАКСИС КНОПОК (без ошибок!)
   const keyboard = {
     inline_keyboard: [
-      [{ text: '🔑 Пароли', callback_ 'admin_passwords' }],
-      [{ text: '📝 Задания', callback_ 'admin_missions' }],
-      [{ text: '💡 Подсказки', callback_ 'admin_hints' }]
+      [{ text: '🔑 Пароли', callback_data:'admin_passwords' }],
+      [{ text: '📝 Задания', callback_data:'admin_missions' }],
+      [{ text: '💡 Подсказки', callback_data:'admin_hints' }]
     ]
   };
   
@@ -416,18 +416,18 @@ bot.action('admin_passwords', async (ctx) => {
   const keyboard = {
     inline_keyboard: [
       [
-        { text: '🚪 Врата', callback_ 'set_pwd_gates' },
-        { text: '🛡️ Купол', callback_ 'set_pwd_dome' }
+        { text: '🚪 Врата', callback_data:'set_pwd_gates' },
+        { text: '🛡️ Купол', callback_data:'set_pwd_dome' }
       ],
       [
-        { text: '🪞 Зеркало', callback_ 'set_pwd_mirror' },
-        { text: '🔮 Камень', callback_ 'set_pwd_stone' }
+        { text: '🪞 Зеркало', callback_data:'set_pwd_mirror' },
+        { text: '🔮 Камень', callback_data:'set_pwd_stone' }
       ],
       [
-        { text: '🏠 Хижина', callback_ 'set_pwd_hut' },
-        { text: '👾 Логово', callback_ 'set_pwd_lair' }
+        { text: '🏠 Хижина', callback_data:'set_pwd_hut' },
+        { text: '👾 Логово', callback_data:'set_pwd_lair' }
       ],
-      [{ text: '🔙 Назад', callback_ 'admin_main' }]
+      [{ text: '🔙 Назад', callback_data:'admin_main' }]
     ]
   };
   
