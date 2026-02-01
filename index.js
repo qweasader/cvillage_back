@@ -77,54 +77,58 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Извлечение userId из initData — КРИТИЧЕСКИ ВАЖНО: правильное имя заголовка
+  // Извлечение userId из initData — УЛУЧШЕННАЯ ВЕРСИЯ С ЛОГИРОВАНИЕМ
   let userId = null;
-  // Telegram Web Apps отправляет заголовок как 'X-Telegram-Init-Data' (с дефисами)
-  // Node.js приводит заголовки к нижнему регистру, но сохраняет дефисы
-  const initData = req.headers['x-telegram-init-data'] || req.headers['x-telegram-initdata'] || '';
+  // Telegram Web Apps отправляет заголовок как 'X-Telegram-Init-Data' (Node.js приводит к нижнему регистру)
+  const initData = req.headers['x-telegram-init-data'] || '';
   
-  // Для отладки (временно)
-  if (!initData) {
-    console.warn('⚠️ Отсутствует заголовок x-telegram-init-data');
-    console.warn('Все заголовки:', Object.keys(req.headers));
-  }
-
   if (initData) {
     try {
+      // ЛОГИРОВАНИЕ ДЛЯ ОТЛАДКИ
+      console.log(`📥 Получен initData (первые 100 символов): ${initData.substring(0, 100)}`);
+      
       const params = new URLSearchParams(initData);
       const userParam = params.get('user');
+      
       if (userParam) {
         const userObj = JSON.parse(decodeURIComponent(userParam));
         userId = String(userObj.id);
-        console.log(`✅ Извлечен userId: ${userId}`);
+        console.log(`✅ Успешно извлечен userId: ${userId} из initData`);
       } else {
         console.warn('⚠️ Параметр "user" не найден в initData');
+        console.warn('Все параметры initData:', [...params.keys()]);
       }
     } catch (e) {
       console.error('❌ Ошибка парсинга initData:', e.message);
-      console.error('initData (первые 200 символов):', initData.substring(0, 200));
+      console.error('Полный initData (первые 300 символов):', initData.substring(0, 300));
     }
+  } else {
+    console.warn('⚠️ Заголовок x-telegram-init-data отсутствует');
+    console.warn('Все заголовки запроса:', Object.keys(req.headers));
   }
 
   // Если не удалось извлечь userId — ошибка авторизации
   if (!userId) {
-    console.error('❌ Не авторизован: не удалось извлечь userId из initData');
+    console.error('❌ КРИТИЧЕСКАЯ ОШИБКА: Не удалось извлечь userId из initData');
     res.writeHead(401);
     res.end(JSON.stringify({ 
       success: false, 
-      message: 'Не авторизован. Откройте приложение через Telegram!' 
+      message: 'Не авторизован. Откройте приложение ТОЛЬКО через кнопку в боте!',
+      debug: 'initData_missing_or_invalid'
     }));
     return;
   }
 
-  // Проверяем регистрацию игрока
+  // Проверяем регистрацию игрока ПО USER ID (не по teamCode из URL!)
   const player = db.getPlayer(userId);
   if (!player || !player.is_registered) {
+    console.warn(`⚠️ Игрок с userId=${userId} не зарегистрирован в боте`);
     res.writeHead(403);
     res.end(JSON.stringify({ 
       success: false, 
       message: 'Сначала зарегистрируйтесь в боте! Напишите /start и введите код команды.',
-      requiresRegistration: true
+      requiresRegistration: true,
+      userId: userId
     }));
     return;
   }
@@ -392,6 +396,7 @@ bot.start(async (ctx) => {
       {
         reply_markup: {
           inline_keyboard: [
+            // КРИТИЧЕСКИ ВАЖНО: передаем код команды в URL
             [{ text: '🚀 Начать квест', web_app: { url: `${FRONTEND_URL}?team=${team.code}` } }],
             [{ text: '📊 Статистика команды', callback_data:'team_stats' }],
             [{ text: '👥 Состав команды', callback_data:'team_members' }],
@@ -409,8 +414,7 @@ bot.start(async (ctx) => {
       `👋 <b>Добро пожаловать, Администратор!</b>\n\n` +
       `🛡️ Вы можете:\n` +
       `• Настроить квест через админ-панель\n` +
-      `• Создать команду и пройти квест как игрок\n` +
-      `• Проверить статистику`,
+      `• Создать команду и пройти квест как игрок`,
       {
         reply_markup: {
           inline_keyboard: [
@@ -464,7 +468,7 @@ bot.command('admin', async (ctx) => {
   await showAdminMenu(ctx);
 });
 
-// Создание новой команды
+// Создание новой команды — ПЕРЕДАЧА КОДА В ССЫЛКЕ
 bot.action('create_new_team', async (ctx) => {
   // Генерируем уникальный код
   const teamCode = db.generateTeamCode();
@@ -484,6 +488,7 @@ bot.action('create_new_team', async (ctx) => {
     {
       reply_markup: {
         inline_keyboard: [
+          // КРИТИЧЕСКИ ВАЖНО: передаем код команды в URL
           [{ text: '🚀 Начать квест', web_app: { url: `${FRONTEND_URL}?team=${teamCode}` } }],
           [{ text: '📊 Статистика команды', callback_data:'team_stats' }],
           [{ text: '🔧 Админ-панель', callback_data:'admin_panel' }]
