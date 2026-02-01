@@ -99,10 +99,10 @@ async function showAdminDashboard(ctx) {
   
   const keyboard = {
     inline_keyboard: [
-      [{ text: '🔑 Пароли локаций', callback_ 'admin_passwords' }],
-      [{ text: '📝 Задания', callback_ 'admin_missions' }],
-      [{ text: '💡 Подсказки', callback_ 'admin_hints' }],
-      [{ text: '📊 Статистика', callback_ 'admin_stats' }]
+      [{ text: '🔑 Пароли локаций', callback_data:'admin_passwords' }],
+      [{ text: '📝 Задания', callback_data:'admin_missions' }],
+      [{ text: '💡 Подсказки', callback_data:'admin_hints' }],
+      [{ text: '📊 Статистика', callback_data:'admin_stats' }]
     ]
   };
   
@@ -138,18 +138,18 @@ bot.action('admin_passwords', async (ctx) => {
   const keyboard = {
     inline_keyboard: [
       [
-        { text: '🚪 Врата', callback_ 'edit_password_gates' },
-        { text: '🛡️ Купол', callback_ 'edit_password_dome' }
+        { text: '🚪 Врата', callback_data:'edit_password_gates' },
+        { text: '🛡️ Купол', callback_data:'edit_password_dome' }
       ],
       [
-        { text: '🪞 Зеркало', callback_ 'edit_password_mirror' },
-        { text: '🔮 Камень', callback_ 'edit_password_stone' }
+        { text: '🪞 Зеркало', callback_data:'edit_password_mirror' },
+        { text: '🔮 Камень', callback_data:'edit_password_stone' }
       ],
       [
-        { text: '🏠 Хижина', callback_ 'edit_password_hut' },
-        { text: '👾 Логово', callback_ 'edit_password_lair' }
+        { text: '🏠 Хижина', callback_data:'edit_password_hut' },
+        { text: '👾 Логово', callback_data:'edit_password_lair' }
       ],
-      [{ text: '🔙 Назад', callback_ 'admin_dashboard' }]
+      [{ text: '🔙 Назад', callback_data:'admin_dashboard' }]
     ]
   };
   
