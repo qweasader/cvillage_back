@@ -1,4 +1,4 @@
-// database.js — полная база данных для квеста
+// database.js — исправленная версия с правильной инициализацией игроков
 import sqlite3 from 'better-sqlite3';
 
 export class QuestDatabase {
@@ -8,10 +8,10 @@ export class QuestDatabase {
   }
 
   initDatabase() {
-    // Игроки
+    // Игроки — ИСПРАВЛЕНО: правильные значения по умолчанию
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS players (
-        id INTEGER PRIMARY KEY,
+        id TEXT PRIMARY KEY,
         username TEXT,
         first_name TEXT NOT NULL,
         last_name TEXT,
@@ -25,7 +25,7 @@ export class QuestDatabase {
       )
     `);
 
-    // Пароли доступа к локациям (для входа)
+    // Пароли
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS location_passwords (
         location TEXT PRIMARY KEY,
@@ -33,7 +33,7 @@ export class QuestDatabase {
       )
     `);
 
-    // Задания локаций
+    // Задания
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS missions (
         location TEXT PRIMARY KEY,
@@ -54,32 +54,30 @@ export class QuestDatabase {
       )
     `);
 
-    // События (аудит)
+    // События
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         type TEXT NOT NULL,
-        user_id INTEGER,
+        user_id TEXT,
         location TEXT,
         data TEXT DEFAULT '{}',
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `);
 
-    // Индексы
-    this.db.exec('CREATE INDEX IF NOT EXISTS idx_players_id ON players(id)');
-    this.db.exec('CREATE INDEX IF NOT EXISTS idx_events_user ON events(user_id)');
-    
     console.log('✅ База данных инициализирована');
   }
 
-  // ============ ИГРОКИ ============
+  // ИГРОКИ
   getPlayer(userId) {
-    return this.db.prepare('SELECT * FROM players WHERE id = ?').get(userId);
+    return this.db.prepare('SELECT * FROM players WHERE id = ?').get(String(userId));
   }
 
   createOrUpdatePlayer(userId, data) {
+    userId = String(userId); // Гарантируем строковый тип
     const existing = this.getPlayer(userId);
+    
     if (existing) {
       this.db.prepare(`
         UPDATE players 
@@ -87,82 +85,61 @@ export class QuestDatabase {
         WHERE id = ?
       `).run(data.username || null, data.first_name || '', data.last_name || null, data.team_id || null, userId);
     } else {
+      // ИСПРАВЛЕНО: правильная инициализация для нового игрока
       this.db.prepare(`
-        INSERT INTO players (id, username, first_name, last_name, team_id, current_location, unlocked_locations)
-        VALUES (?, ?, ?, ?, ?, 'gates', '["gates"]')
-      `).run(userId, data.username || null, data.first_name || '', data.last_name || null, data.team_id || null);
+        INSERT INTO players (id, username, first_name, last_name, team_id)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(
+        userId,
+        data.username || null,
+        data.first_name || 'Игрок',
+        data.last_name || null,
+        data.team_id || null
+      );
     }
     return this.getPlayer(userId);
   }
 
-  // Разблокировать следующую локацию
-  unlockNextLocation(userId) {
-    const player = this.getPlayer(userId);
-    if (!player) return;
-    
-    const allLocations = ['gates', 'dome', 'mirror', 'stone', 'hut', 'lair'];
-    const unlocked = JSON.parse(player.unlocked_locations || '["gates"]');
-    const completed = JSON.parse(player.completed_locations || '[]');
-    
-    // Находим следующую локацию после последней завершенной
-    const lastCompletedIndex = Math.max(
-      ...completed.map(loc => allLocations.indexOf(loc)),
-      -1
-    );
-    
-    const nextIndex = lastCompletedIndex + 1;
-    if (nextIndex < allLocations.length && !unlocked.includes(allLocations[nextIndex])) {
-      unlocked.push(allLocations[nextIndex]);
-      this.db.prepare('UPDATE players SET unlocked_locations = ? WHERE id = ?')
-        .run(JSON.stringify(unlocked), userId);
-    }
-  }
-
-  // Завершить локацию
   completeLocation(userId, locationId) {
+    userId = String(userId);
     const player = this.getPlayer(userId);
     if (!player) return;
     
     let completed = JSON.parse(player.completed_locations || '[]');
     if (!completed.includes(locationId)) {
       completed.push(locationId);
-      this.db.prepare('UPDATE players SET completed_locations = ?, current_location = ? WHERE id = ?')
+      this.db.prepare('UPDATE players SET completed_locations = ?, current_location = ?, last_activity = CURRENT_TIMESTAMP WHERE id = ?')
         .run(JSON.stringify(completed), locationId, userId);
-      
-      // Разблокируем следующую локацию
-      this.unlockNextLocation(userId);
     }
   }
 
-  // Использовать подсказку
   useHint(userId) {
+    userId = String(userId);
     const player = this.getPlayer(userId);
-    if (!player) return false;
-    if (player.hints_used >= 3) return false;
-    
-    this.db.prepare('UPDATE players SET hints_used = hints_used + 1 WHERE id = ?').run(userId);
+    if (!player || player.hints_used >= 3) return false;
+    this.db.prepare('UPDATE players SET hints_used = hints_used + 1, last_activity = CURRENT_TIMESTAMP WHERE id = ?').run(userId);
     return true;
   }
 
-  // ============ ПАРОЛИ ДОСТУПА ============
+  // ПАРОЛИ — ИСПРАВЛЕНО: всегда возвращаем строку без пробелов
   getPassword(location) {
     const row = this.db.prepare('SELECT password FROM location_passwords WHERE location = ?').get(location);
     return row ? row.password.trim() : null;
   }
 
   setPassword(location, password) {
-    const cleanPassword = password.trim();
+    const clean = password.trim();
     this.db.prepare(`
       INSERT OR REPLACE INTO location_passwords (location, password)
       VALUES (?, ?)
-    `).run(location, cleanPassword);
+    `).run(location, clean);
   }
 
   getAllPasswords() {
     return this.db.prepare('SELECT * FROM location_passwords').all();
   }
 
-  // ============ ЗАДАНИЯ ============
+  // ЗАДАНИЯ
   getMission(location) {
     return this.db.prepare('SELECT * FROM missions WHERE location = ?').get(location);
   }
@@ -178,7 +155,7 @@ export class QuestDatabase {
     return this.db.prepare('SELECT * FROM missions').all();
   }
 
-  // ============ ПОДСКАЗКИ ============
+  // ПОДСКАЗКИ
   getHint(location, level) {
     return this.db.prepare(`
       SELECT * FROM hints 
@@ -189,35 +166,19 @@ export class QuestDatabase {
   }
 
   createHint(location, level, text) {
-    // Удаляем существующую подсказку того же уровня
     this.db.prepare('DELETE FROM hints WHERE location = ? AND level = ?').run(location, level);
-    
     this.db.prepare(`
       INSERT INTO hints (location, level, text)
       VALUES (?, ?, ?)
     `).run(location, level, text.trim());
   }
 
-  getHintsForLocation(location) {
-    return this.db.prepare('SELECT * FROM hints WHERE location = ? ORDER BY level').all(location);
-  }
-
-  // ============ СОБЫТИЯ ============
+  // СОБЫТИЯ
   logEvent(type, userId = null, location = null, data = {}) {
+    if (userId) userId = String(userId);
     this.db.prepare(`
       INSERT INTO events (type, user_id, location, data)
       VALUES (?, ?, ?, ?)
     `).run(type, userId, location, JSON.stringify(data));
-  }
-
-  // ============ СТАТИСТИКА ============
-  getStats() {
-    const totalPlayers = this.db.prepare('SELECT COUNT(*) as cnt FROM players').get().cnt;
-    const completedPlayers = this.db.prepare(`
-      SELECT COUNT(*) as cnt FROM players 
-      WHERE json_array_length(completed_locations) >= 6
-    `).get().cnt;
-    
-    return { totalPlayers, completedPlayers };
   }
 }
