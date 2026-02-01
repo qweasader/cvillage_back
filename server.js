@@ -264,5 +264,5 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`✅ HTTP Server запущен на порту ${PORT}`);
-  console.log(`🌐 Frontend должен отправлять запросы на: https://ваш-бот.railway.app`);
+  console.log(`🌐 Frontend должен отправлять запросы на: https://refreshing-nourishment-production-e7ce.up.railway.app`);
 });
