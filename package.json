@@ -1,11 +1,9 @@
 {
-  "name": "quest-bot",
+  "name": "quest-system",
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "start": "node bot.js & node server.js",
-    "bot": "node bot.js",
-    "server": "node server.js"
+    "start": "node index.js"
   },
   "dependencies": {
     "telegraf": "^4.16.3",
