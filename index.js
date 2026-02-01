@@ -1,4 +1,4 @@
-// index.js — исправленная версия с надежной проверкой паролей
+// index.js — полная переработка с детальным логированием каждого шага
 import { Telegraf } from 'telegraf';
 import http from 'http';
 import { URL } from 'url';
@@ -11,7 +11,7 @@ const ADMIN_USER_IDS = process.env.ADMIN_USER_IDS;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://qweasader.github.io/cybervillage_defend/';
 const PORT = process.env.PORT || 3000;
-const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || 'quest-bot-webhook-secret-1234567890';
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
 
 if (!TELEGRAM_BOT_TOKEN) throw new Error('TELEGRAM_BOT_TOKEN не установлен');
 if (ADMIN_USER_IDS[0] === 123456789) throw new Error('Замените 123456789 на ваш реальный Telegram ID');
@@ -142,11 +142,21 @@ const server = http.createServer(async (req, res) => {
     try {
       const data = body ? JSON.parse(body) : {};
 
-      // ПРОВЕРКА ПАРОЛЯ — ИСПРАВЛЕНО: НАДЕЖНАЯ НОРМАЛИЗАЦИЯ
+      // ПРОВЕРКА ПАРОЛЯ — ПОЛНОСТЬЮ ПЕРЕДЕЛАНАЯ ВЕРСИЯ С МАКСИМАЛЬНЫМ ЛОГИРОВАНИЕМ
       if (pathname === '/check-password' && req.method === 'POST') {
         const { location, password } = data;
         
+        // ============ ЭТАП 1: ПОЛУЧЕНИЕ ДАННЫХ ИЗ ЗАПРОСА ============
+        console.log(`\n${'='.repeat(80)}`);
+        console.log(`🔐 [ПРОВЕРКА ПАРОЛЯ] Новый запрос`);
+        console.log(`   Время: ${new Date().toISOString()}`);
+        console.log(`   Локация: "${location}"`);
+        console.log(`   Пароль (как пришел): "${password}"`);
+        console.log(`   Длина пароля: ${password ? password.length : 0} символов`);
+        
+        // Проверка наличия данных
         if (!location || !password) {
+          console.error(`   ❌ Ошибка: не указаны локация или пароль`);
           res.writeHead(400, {
             'Content-Type': 'application/json',
             'Access-Control-Allow-Origin': '*'
@@ -155,13 +165,20 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        // Проверяем, что это следующая локация для команды
+        // ============ ЭТАП 2: ПРОВЕРКА ЛОКАЦИИ ============
         const unlocked = JSON.parse(team.unlocked_locations || '["gates"]');
         const completed = JSON.parse(team.completed_locations || '[]');
         const nextLocationIndex = completed.length;
         const expectedLocation = ALL_LOCATIONS[nextLocationIndex] || 'gates';
         
+        console.log(`\n📍 Проверка локации:`);
+        console.log(`   Текущая локация команды: ${expectedLocation}`);
+        console.log(`   Запрошенная локация: ${location}`);
+        console.log(`   Открытые локации: ${unlocked.join(', ')}`);
+        console.log(`   Завершенные локации: ${completed.length}`);
+        
         if (location !== expectedLocation) {
+          console.warn(`   ⚠️ Локация не совпадает!`);
           const expectedName = LOCATIONS[expectedLocation].name;
           res.writeHead(200, {
             'Content-Type': 'application/json',
@@ -173,12 +190,14 @@ const server = http.createServer(async (req, res) => {
           }));
           return;
         }
+        console.log(`   ✅ Локация проверена: "${location}" доступна для проверки`);
 
-        // Получаем пароль из БД
+        // ============ ЭТАП 3: ПОЛУЧЕНИЕ ПАРОЛЯ ИЗ БД ============
+        console.log(`\n🔑 Получение пароля из базы данных...`);
         const passwordData = db.getPassword(location);
         
         if (!passwordData) {
-          console.warn(`⚠️ Пароль для локации ${location} не настроен`);
+          console.error(`   ❌ Пароль для локации "${location}" НЕ НАЙДЕН в базе данных!`);
           res.writeHead(200, {
             'Content-Type': 'application/json',
             'Access-Control-Allow-Origin': '*'
@@ -189,24 +208,53 @@ const server = http.createServer(async (req, res) => {
           }));
           return;
         }
-
-        // Нормализуем введенный пароль (так же, как при сохранении)
-        const cleanInput = password.trim();
-        const normalizedInput = cleanInput.toLowerCase().replace(/[^a-z0-9_]/g, '');
         
-        // Сравниваем нормализованные версии
+        console.log(`   ✅ Пароль из БД получен:`);
+        console.log(`      Оригинал: "${passwordData.original}"`);
+        console.log(`      normalized: "${passwordData.normalized}"`);
+
+        // ============ ЭТАП 4: НОРМАЛИЗАЦИЯ ВВЕДЕННОГО ПАРОЛЯ ============
+        console.log(`\n✏️ Нормализация введенного пароля...`);
+        const cleanInput = password.trim();
+        console.log(`   После trim: "${cleanInput}" (длина: ${cleanInput.length})`);
+        
+        const normalizedInput = db.normalizePassword(cleanInput);
+        console.log(`   Нормализованный ввод: "${normalizedInput}"`);
+
+        // ============ ЭТАП 5: СРАВНЕНИЕ ============
+        console.log(`\n⚖️ Сравнение паролей:`);
+        console.log(`   Введенный (нормализ.): "${normalizedInput}"`);
+        console.log(`   Из БД (нормализ.):    "${passwordData.normalized}"`);
+        console.log(`   Длина введенного: ${normalizedInput.length}`);
+        console.log(`   Длина из БД: ${passwordData.normalized.length}`);
+        
+        // Побайтовое сравнение для отладки
+        if (normalizedInput.length === passwordData.normalized.length) {
+          let diffFound = false;
+          for (let i = 0; i < normalizedInput.length; i++) {
+            if (normalizedInput[i] !== passwordData.normalized[i]) {
+              console.log(`   ⚠️ Различие на позиции ${i}:`);
+              console.log(`      Введенный: "${normalizedInput[i]}" (код ${normalizedInput.charCodeAt(i)})`);
+              console.log(`      Из БД:     "${passwordData.normalized[i]}" (код ${passwordData.normalized.charCodeAt(i)})`);
+              diffFound = true;
+              break;
+            }
+          }
+          if (!diffFound) {
+            console.log(`   ✅ Все символы совпадают`);
+          }
+        } else {
+          console.log(`   ⚠️ Длины не совпадают!`);
+        }
+        
         const isCorrect = normalizedInput === passwordData.normalized;
+        console.log(`\n✅ Результат проверки: ${isCorrect ? 'ВЕРНО' : 'НЕВЕРНО'}`);
 
-        // ДЕТАЛЬНОЕ ЛОГИРОВАНИЕ ДЛЯ ОТЛАДКИ
-        console.log(`🔑 Проверка пароля для локации "${location}":`);
-        console.log(`   Введено (оригинал): "${cleanInput}"`);
-        console.log(`   Введено (нормализ.): "${normalizedInput}"`);
-        console.log(`   В БД (оригинал): "${passwordData.original}"`);
-        console.log(`   В БД (нормализ.): "${passwordData.normalized}"`);
-        console.log(`   Результат: ${isCorrect ? '✅ ВЕРНО' : '❌ НЕВЕРНО'}`);
-
+        // ============ ЭТАП 6: ОТПРАВКА ОТВЕТА ============
         if (isCorrect) {
           db.logEvent('location_unlocked', team.id, location, { userId });
+          console.log(`\n🎉 Пароль ВЕРНЫЙ! Локация разблокирована.`);
+          
           res.writeHead(200, {
             'Content-Type': 'application/json',
             'Access-Control-Allow-Origin': '*'
@@ -225,6 +273,14 @@ const server = http.createServer(async (req, res) => {
             normalized: normalizedInput
           });
           
+          console.log(`\n❌ Пароль НЕВЕРНЫЙ!`);
+          console.log(`   Подробности для отладки:`);
+          console.log(`      Введено (оригинал): "${password}"`);
+          console.log(`      Введено (после trim): "${cleanInput}"`);
+          console.log(`      Введено (нормализ.): "${normalizedInput}"`);
+          console.log(`      Ожидалось (нормализ.): "${passwordData.normalized}"`);
+          console.log(`      Разница в длине: ${Math.abs(normalizedInput.length - passwordData.normalized.length)} символов`);
+          
           res.writeHead(200, {
             'Content-Type': 'application/json',
             'Access-Control-Allow-Origin': '*'
@@ -233,11 +289,19 @@ const server = http.createServer(async (req, res) => {
             success: false, 
             message: 'Неверный пароль! Проверьте написание и попробуйте снова.',
             debug: {
+              inputRaw: password,
+              inputTrimmed: cleanInput,
               inputNormalized: normalizedInput,
-              expectedNormalized: passwordData.normalized
+              expectedNormalized: passwordData.normalized,
+              inputLength: password.length,
+              trimmedLength: cleanInput.length,
+              normalizedLength: normalizedInput.length,
+              expectedLength: passwordData.normalized.length
             }
           }));
         }
+        
+        console.log(`${'='.repeat(80)}\n`);
         return;
       }
 
@@ -328,7 +392,6 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        // Нормализация ответа (без учета регистра и лишних пробелов)
         const cleanAnswer = answer.trim().toLowerCase();
         const correctAnswer = mission.answer.trim().toLowerCase();
         const isCorrect = cleanAnswer === correctAnswer;
@@ -437,6 +500,7 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({ error: 'Not found' }));
     } catch (error) {
       console.error('❌ Ошибка сервера:', error);
+      console.error('Стек:', error.stack);
       res.writeHead(500, {
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*'
@@ -446,7 +510,6 @@ const server = http.createServer(async (req, res) => {
   });
 });
 
-// ==================== TELEGRAM БОТ ====================
 bot.use((ctx, next) => {
   ctx.isAdmin = ADMIN_USER_IDS.includes(ctx.from?.id);
   ctx.session = getSession(ctx.from?.id);
