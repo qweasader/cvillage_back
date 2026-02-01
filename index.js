@@ -379,7 +379,7 @@ bot.start(async (ctx) => {
   const isRegistered = player && player.is_registered;
   
   // Для админа всегда показываем кнопку админ-панели
-  const adminButton = ctx.isAdmin ? [{ text: '🔧 Админ-панель', callback_data:'admin_panel' }] : [];
+  const adminButton = ctx.isAdmin ? [{ text: '🔧 Админ-панель', callback_ 'admin_panel' }] : [];
   
   // Если зарегистрирован — показываем меню квеста
   if (isRegistered) {
@@ -393,8 +393,8 @@ bot.start(async (ctx) => {
         reply_markup: {
           inline_keyboard: [
             [{ text: '🚀 Начать квест', web_app: { url: `${FRONTEND_URL}?team=${team.code}` } }],
-            [{ text: '📊 Статистика команды', callback_data:'team_stats' }],
-            [{ text: '👥 Состав команды', callback_data:'team_members' }],
+            [{ text: '📊 Статистика команды', callback_ 'team_stats' }],
+            [{ text: '👥 Состав команды', callback_ 'team_members' }],
             ...adminButton
           ]
         }
@@ -414,9 +414,9 @@ bot.start(async (ctx) => {
       {
         reply_markup: {
           inline_keyboard: [
-            [{ text: '🔧 Админ-панель', callback_data:'admin_panel' }],
-            [{ text: '🆕 Создать команду', callback_data:'create_new_team' }],
-            [{ text: '❓ Как создать команду?', callback_data:'how_to_create' }]
+            [{ text: '🔧 Админ-панель', callback_ 'admin_panel' }],
+            [{ text: '🆕 Создать команду', callback_ 'create_new_team' }],
+            [{ text: '❓ Как создать команду?', callback_ 'how_to_create' }]
           ]
         }
       }
@@ -437,8 +437,8 @@ bot.start(async (ctx) => {
     {
       reply_markup: {
         inline_keyboard: [
-          [{ text: '🆕 Создать новую команду', callback_data:'create_new_team' }],
-          [{ text: '❓ Как создать команду?', callback_data:'how_to_create' }]
+          [{ text: '🆕 Создать новую команду', callback_ 'create_new_team' }],
+          [{ text: '❓ Как создать команду?', callback_ 'how_to_create' }]
         ]
       }
     }
@@ -485,8 +485,8 @@ bot.action('create_new_team', async (ctx) => {
       reply_markup: {
         inline_keyboard: [
           [{ text: '🚀 Начать квест', web_app: { url: `${FRONTEND_URL}?team=${teamCode}` } }],
-          [{ text: '📊 Статистика команды', callback_data:'team_stats' }],
-          [{ text: '🔧 Админ-панель', callback_data:'admin_panel' }]
+          [{ text: '📊 Статистика команды', callback_ 'team_stats' }],
+          [{ text: '🔧 Админ-панель', callback_ 'admin_panel' }]
         ]
       }
     }
@@ -515,7 +515,7 @@ bot.action('how_to_create', async (ctx) => {
     {
       reply_markup: {
         inline_keyboard: [
-          [{ text: '🔙 Назад', callback_data:'back_to_register' }]
+          [{ text: '🔙 Назад', callback_ 'back_to_register' }]
         ]
       }
     }
@@ -537,9 +537,9 @@ bot.action('back_to_register', async (ctx) => {
         parse_mode: 'HTML',
         reply_markup: {
           inline_keyboard: [
-            [{ text: '🔧 Админ-панель', callback_data:'admin_panel' }],
-            [{ text: '🆕 Создать команду', callback_data:'create_new_team' }],
-            [{ text: '❓ Как создать команду?', callback_data:'how_to_create' }]
+            [{ text: '🔧 Админ-панель', callback_ 'admin_panel' }],
+            [{ text: '🆕 Создать команду', callback_ 'create_new_team' }],
+            [{ text: '❓ Как создать команду?', callback_ 'how_to_create' }]
           ]
         }
       }
@@ -557,8 +557,8 @@ bot.action('back_to_register', async (ctx) => {
         parse_mode: 'HTML',
         reply_markup: {
           inline_keyboard: [
-            [{ text: '🆕 Создать новую команду', callback_data:'create_new_team' }],
-            [{ text: '❓ Как создать команду?', callback_data:'how_to_create' }]
+            [{ text: '🆕 Создать новую команду', callback_ 'create_new_team' }],
+            [{ text: '❓ Как создать команду?', callback_ 'how_to_create' }]
           ]
         }
       }
@@ -631,7 +631,7 @@ bot.on('text', async (ctx) => {
     delete ctx.session.teamCode;
     
     // Для админа добавляем кнопку админ-панели
-    const adminButton = ctx.isAdmin ? [{ text: '🔧 Админ-панель', callback_data:'admin_panel' }] : [];
+    const adminButton = ctx.isAdmin ? [{ text: '🔧 Админ-панель', callback_ 'admin_panel' }] : [];
     
     await ctx.replyWithHTML(
       `✅ <b>Регистрация завершена!</b>\n\n` +
@@ -643,7 +643,7 @@ bot.on('text', async (ctx) => {
         reply_markup: {
           inline_keyboard: [
             [{ text: '🚀 Начать квест', web_app: { url: `${FRONTEND_URL}?team=${team.code}` } }],
-            [{ text: '📊 Статистика команды', callback_data:'team_stats' }],
+            [{ text: '📊 Статистика команды', callback_ 'team_stats' }],
             ...adminButton
           ]
         }
@@ -889,10 +889,10 @@ async function showAdminMenu(ctx) {
   // ИСПРАВЛЕНО: ВСЕ КНОПКИ ИСПОЛЬЗУЮТ ПРАВИЛЬНЫЙ СИНТАКСИС callback_data
   const keyboard = {
     inline_keyboard: [
-      [{ text: '🔑 Пароли доступа', callback_data:'admin_passwords' }],
-      [{ text: '📝 Задания локаций', callback_data:'admin_missions' }],
-      [{ text: '💡 Подсказки', callback_data:'admin_hints' }],
-      [{ text: '📊 Статистика', callback_data:'admin_stats' }]
+      [{ text: '🔑 Пароли доступа', callback_ 'admin_passwords' }],
+      [{ text: '📝 Задания локаций', callback_ 'admin_missions' }],
+      [{ text: '💡 Подсказки', callback_ 'admin_hints' }],
+      [{ text: '📊 Статистика', callback_ 'admin_stats' }]
     ]
   };
   
@@ -931,18 +931,18 @@ bot.action('admin_passwords', async (ctx) => {
   const keyboard = {
     inline_keyboard: [
       [
-        { text: '🚪 Врата', callback_data:'set_pwd_gates' },
-        { text: '🛡️ Купол', callback_data:'set_pwd_dome' }
+        { text: '🚪 Врата', callback_ 'set_pwd_gates' },
+        { text: '🛡️ Купол', callback_ 'set_pwd_dome' }
       ],
       [
-        { text: '🪞 Зеркало', callback_data:'set_pwd_mirror' },
-        { text: '🔮 Камень', callback_data:'set_pwd_stone' }
+        { text: '🪞 Зеркало', callback_ 'set_pwd_mirror' },
+        { text: '🔮 Камень', callback_ 'set_pwd_stone' }
       ],
       [
-        { text: '🏠 Хижина', callback_data:'set_pwd_hut' },
-        { text: '👾 Логово', callback_data:'set_pwd_lair' }
+        { text: '🏠 Хижина', callback_ 'set_pwd_hut' },
+        { text: '👾 Логово', callback_ 'set_pwd_lair' }
       ],
-      [{ text: '🔙 Назад', callback_data:'admin_main' }]
+      [{ text: '🔙 Назад', callback_ 'admin_main' }]
     ]
   };
   
@@ -996,18 +996,18 @@ bot.action('admin_missions', async (ctx) => {
   const keyboard = {
     inline_keyboard: [
       [
-        { text: '🚪 Врата', callback_data:'set_mission_gates' },
-        { text: '🛡️ Купол', callback_data:'set_mission_dome' }
+        { text: '🚪 Врата', callback_ 'set_mission_gates' },
+        { text: '🛡️ Купол', callback_ 'set_mission_dome' }
       ],
       [
-        { text: '🪞 Зеркало', callback_data:'set_mission_mirror' },
-        { text: '🔮 Камень', callback_data:'set_mission_stone' }
+        { text: '🪞 Зеркало', callback_ 'set_mission_mirror' },
+        { text: '🔮 Камень', callback_ 'set_mission_stone' }
       ],
       [
-        { text: '🏠 Хижина', callback_data:'set_mission_hut' },
-        { text: '👾 Логово', callback_data:'set_mission_lair' }
+        { text: '🏠 Хижина', callback_ 'set_mission_hut' },
+        { text: '👾 Логово', callback_ 'set_mission_lair' }
       ],
-      [{ text: '🔙 Назад', callback_data:'admin_main' }]
+      [{ text: '🔙 Назад', callback_ 'admin_main' }]
     ]
   };
   
@@ -1061,8 +1061,8 @@ bot.action('admin_hints', async (ctx) => {
   // ИСПРАВЛЕНО: ВСЕ КНОПКИ С ПРАВИЛЬНЫМ СИНТАКСИСОМ callback_data
   const keyboard = {
     inline_keyboard: [
-      [{ text: '➕ Добавить подсказку', callback_data:'add_hint' }],
-      [{ text: '🔙 Назад', callback_data:'admin_main' }]
+      [{ text: '➕ Добавить подсказку', callback_ 'add_hint' }],
+      [{ text: '🔙 Назад', callback_ 'admin_main' }]
     ]
   };
   
@@ -1081,18 +1081,18 @@ bot.action('add_hint', async (ctx) => {
   const keyboard = {
     inline_keyboard: [
       [
-        { text: '🚪 Врата', callback_data:'hint_loc_gates' },
-        { text: '🛡️ Купол', callback_data:'hint_loc_dome' }
+        { text: '🚪 Врата', callback_ 'hint_loc_gates' },
+        { text: '🛡️ Купол', callback_ 'hint_loc_dome' }
       ],
       [
-        { text: '🪞 Зеркало', callback_data:'hint_loc_mirror' },
-        { text: '🔮 Камень', callback_data:'hint_loc_stone' }
+        { text: '🪞 Зеркало', callback_ 'hint_loc_mirror' },
+        { text: '🔮 Камень', callback_ 'hint_loc_stone' }
       ],
       [
-        { text: '🏠 Хижина', callback_data:'hint_loc_hut' },
-        { text: '👾 Логово', callback_data:'hint_loc_lair' }
+        { text: '🏠 Хижина', callback_ 'hint_loc_hut' },
+        { text: '👾 Логово', callback_ 'hint_loc_lair' }
       ],
-      [{ text: '🔙 Отмена', callback_data:'admin_hints' }]
+      [{ text: '🔙 Отмена', callback_ 'admin_hints' }]
     ]
   };
   
@@ -1142,8 +1142,8 @@ bot.action('admin_stats', async (ctx) => {
   // ИСПРАВЛЕНО: ВСЕ КНОПКИ С ПРАВИЛЬНЫМ СИНТАКСИСОМ callback_data
   const keyboard = {
     inline_keyboard: [
-      [{ text: '🔄 Обновить', callback_data:'admin_stats' }],
-      [{ text: '🔙 Назад', callback_data:'admin_main' }]
+      [{ text: '🔄 Обновить', callback_ 'admin_stats' }],
+      [{ text: '🔙 Назад', callback_ 'admin_main' }]
     ]
   };
   
