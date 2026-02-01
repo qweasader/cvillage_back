@@ -1,4 +1,4 @@
-// database.js — поддержка командного квеста
+// database.js — исправленная версия с правильной обработкой паролей
 import sqlite3 from 'better-sqlite3';
 
 export class QuestDatabase {
@@ -39,11 +39,12 @@ export class QuestDatabase {
       )
     `);
 
-    // Пароли доступа
+    // Пароли доступа — ИСПРАВЛЕНО: добавлено поле для нормализованного пароля
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS location_passwords (
         location TEXT PRIMARY KEY,
-        password TEXT NOT NULL
+        password TEXT NOT NULL,
+        normalized_password TEXT NOT NULL  -- Нормализованный пароль для сравнения
       )
     `);
 
@@ -99,7 +100,6 @@ export class QuestDatabase {
   }
 
   createTeam(code, name) {
-    // Генерируем уникальный код, если не задан
     const teamCode = code || this.generateTeamCode();
     const cleanName = name.trim() || `Команда ${teamCode}`;
     
@@ -119,7 +119,6 @@ export class QuestDatabase {
     for (let i = 0; i < 6; i++) {
       code += chars.charAt(Math.floor(Math.random() * chars.length));
     }
-    // Проверяем уникальность
     if (this.getTeamByCode(code)) {
       return this.generateTeamCode();
     }
@@ -131,15 +130,12 @@ export class QuestDatabase {
     return this.db.prepare('SELECT * FROM players WHERE id = ?').get(String(userId));
   }
 
-  // Регистрация игрока в команде
   registerPlayer(userId, teamCode, playerName = null) {
-    // Получаем или создаём команду
     let team = this.getTeamByCode(teamCode);
     if (!team) {
       team = this.createTeam(teamCode, `Команда ${teamCode}`);
     }
     
-    // Обновляем или создаём игрока
     const existing = this.getPlayer(userId);
     const cleanName = (playerName || '').trim() || 'Игрок';
     
@@ -167,13 +163,11 @@ export class QuestDatabase {
     return { player, team };
   }
 
-  // Проверка регистрации
   isPlayerRegistered(userId) {
     const player = this.getPlayer(userId);
     return player && player.is_registered;
   }
 
-  // Завершение локации (на уровне команды)
   completeLocationForTeam(teamId, locationId) {
     const team = this.getTeamById(teamId);
     if (!team) return;
@@ -187,12 +181,10 @@ export class QuestDatabase {
         WHERE id = ?
       `).run(JSON.stringify(completed), locationId, teamId);
       
-      // Разблокируем следующую локацию
       this.unlockNextLocationForTeam(teamId);
     }
   }
 
-  // Разблокировка следующей локации
   unlockNextLocationForTeam(teamId) {
     const team = this.getTeamById(teamId);
     if (!team) return;
@@ -214,7 +206,6 @@ export class QuestDatabase {
     }
   }
 
-  // Использование подсказки (на уровне команды)
   useHintForTeam(teamId) {
     const team = this.getTeamById(teamId);
     if (!team || team.hints_used >= 3) return false;
@@ -224,29 +215,39 @@ export class QuestDatabase {
     return true;
   }
 
-  // Получение состава команды
   getTeamMembers(teamId) {
     return this.db.prepare('SELECT * FROM players WHERE team_id = ? ORDER BY registered_at').all(teamId);
   }
 
-  // ============ ПАРОЛИ, ЗАДАНИЯ, ПОДСКАЗКИ ============
+  // ============ ПАРОЛИ — ИСПРАВЛЕНО: НОРМАЛИЗАЦИЯ ============
   getPassword(location) {
-    const row = this.db.prepare('SELECT password FROM location_passwords WHERE location = ?').get(location);
-    return row ? row.password.trim() : null;
+    const row = this.db.prepare('SELECT password, normalized_password FROM location_passwords WHERE location = ?').get(location);
+    return row ? { 
+      original: row.password.trim(), 
+      normalized: row.normalized_password.trim() 
+    } : null;
   }
 
   setPassword(location, password) {
     const clean = password.trim();
+    // Нормализация: приводим к нижнему регистру и удаляем все не-буквенно-цифровые символы кроме подчеркивания
+    const normalized = clean.toLowerCase().replace(/[^a-z0-9_]/g, '');
+    
+    console.log(`🔐 Сохранение пароля для ${location}:`);
+    console.log(`   Оригинал: "${clean}"`);
+    console.log(`   Нормализованный: "${normalized}"`);
+    
     this.db.prepare(`
-      INSERT OR REPLACE INTO location_passwords (location, password)
-      VALUES (?, ?)
-    `).run(location, clean);
+      INSERT OR REPLACE INTO location_passwords (location, password, normalized_password)
+      VALUES (?, ?, ?)
+    `).run(location, clean, normalized);
   }
 
   getAllPasswords() {
     return this.db.prepare('SELECT * FROM location_passwords').all();
   }
 
+  // ============ ЗАДАНИЯ ============
   getMission(location) {
     return this.db.prepare('SELECT * FROM missions WHERE location = ?').get(location);
   }
@@ -262,6 +263,7 @@ export class QuestDatabase {
     return this.db.prepare('SELECT * FROM missions').all();
   }
 
+  // ============ ПОДСКАЗКИ ============
   getHint(location, level) {
     return this.db.prepare(`
       SELECT * FROM hints 
