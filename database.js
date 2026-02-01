@@ -1,4 +1,4 @@
-// database.js — исправленная версия с правильной обработкой паролей
+// database.js — полная переработка с детальным логированием
 import sqlite3 from 'better-sqlite3';
 
 export class QuestDatabase {
@@ -8,7 +8,32 @@ export class QuestDatabase {
   }
 
   initDatabase() {
-    // Команды (новая таблица)
+    // Проверяем структуру существующей таблицы
+    const tableInfo = this.db.prepare("PRAGMA table_info(location_passwords)").all();
+    const hasNormalizedColumn = tableInfo.some(col => col.name === 'normalized_password');
+    
+    console.log('🔍 Проверка структуры таблицы location_passwords:');
+    console.log(`   Столбцы: ${tableInfo.map(col => col.name).join(', ')}`);
+    console.log(`   normalized_password существует: ${hasNormalizedColumn ? '✅' : '❌'}`);
+    
+    // Если столбца нет — добавляем его
+    if (!hasNormalizedColumn) {
+      console.log('🔧 Добавление столбца normalized_password в существующую таблицу...');
+      try {
+        this.db.exec(`
+          ALTER TABLE location_passwords 
+          ADD COLUMN normalized_password TEXT NOT NULL DEFAULT ''
+        `);
+        console.log('✅ Столбец normalized_password добавлен успешно');
+      } catch (e) {
+        console.error('❌ Ошибка добавления столбца:', e.message);
+        // Если не удалось добавить — пересоздаем таблицу
+        console.log('🔄 Пересоздание таблицы location_passwords...');
+        this.db.exec('DROP TABLE IF EXISTS location_passwords');
+      }
+    }
+
+    // Команды
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS teams (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -23,7 +48,7 @@ export class QuestDatabase {
       )
     `);
 
-    // Игроки (обновлённая структура)
+    // Игроки
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS players (
         id TEXT PRIMARY KEY,
@@ -39,12 +64,12 @@ export class QuestDatabase {
       )
     `);
 
-    // Пароли доступа — ИСПРАВЛЕНО: добавлено поле для нормализованного пароля
+    // Пароли доступа — С ОБЯЗАТЕЛЬНЫМ СТОЛБЦОМ normalized_password
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS location_passwords (
         location TEXT PRIMARY KEY,
         password TEXT NOT NULL,
-        normalized_password TEXT NOT NULL  -- Нормализованный пароль для сравнения
+        normalized_password TEXT NOT NULL
       )
     `);
 
@@ -88,6 +113,27 @@ export class QuestDatabase {
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_events_team ON events(team_id)');
     
     console.log('✅ База данных инициализирована (командный режим)');
+    console.log('📊 Текущее состояние паролей:');
+    const passwords = this.db.prepare('SELECT location, password, normalized_password FROM location_passwords').all();
+    passwords.forEach(p => {
+      console.log(`   ${p.location}: "${p.password}" → normalized: "${p.normalized_password}"`);
+    });
+  }
+
+  // ============ ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ДЛЯ ОТЛАДКИ ============
+  normalizePassword(password) {
+    const original = password;
+    const trimmed = password.trim();
+    const lowercased = trimmed.toLowerCase();
+    const normalized = lowercased.replace(/[^a-z0-9_]/g, '');
+    
+    console.log(`🔍 Нормализация пароля:`);
+    console.log(`   Исходный: "${original}" (длина: ${original.length})`);
+    console.log(`   После trim: "${trimmed}" (длина: ${trimmed.length})`);
+    console.log(`   После toLowerCase: "${lowercased}" (длина: ${lowercased.length})`);
+    console.log(`   После удаления спецсимволов: "${normalized}" (длина: ${normalized.length})`);
+    
+    return normalized;
   }
 
   // ============ КОМАНДЫ ============
@@ -219,28 +265,73 @@ export class QuestDatabase {
     return this.db.prepare('SELECT * FROM players WHERE team_id = ? ORDER BY registered_at').all(teamId);
   }
 
-  // ============ ПАРОЛИ — ИСПРАВЛЕНО: НОРМАЛИЗАЦИЯ ============
+  // ============ ПАРОЛИ — ПОЛНОСТЬЮ ПЕРЕДЕЛАНАЯ ВЕРСИЯ С ЛОГИРОВАНИЕМ ============
   getPassword(location) {
+    console.log(`\n🔐 [getPassword] Запрос пароля для локации: "${location}"`);
+    
     const row = this.db.prepare('SELECT password, normalized_password FROM location_passwords WHERE location = ?').get(location);
-    return row ? { 
+    
+    if (!row) {
+      console.log(`   ❌ Пароль для локации "${location}" НЕ НАЙДЕН в базе данных`);
+      console.log(`   📊 Текущие пароли в БД:`);
+      const allPasswords = this.db.prepare('SELECT location, password FROM location_passwords').all();
+      allPasswords.forEach(p => console.log(`      ${p.location}: "${p.password}"`));
+      return null;
+    }
+    
+    console.log(`   ✅ Найден пароль в БД:`);
+    console.log(`      Оригинал: "${row.password}"`);
+    console.log(`      normalized_password: "${row.normalized_password}"`);
+    
+    // Если normalized_password пустой — пересчитываем
+    if (!row.normalized_password || row.normalized_password.trim() === '') {
+      console.log(`   ⚠️ normalized_password пустой! Пересчитываем...`);
+      const recalculated = this.normalizePassword(row.password);
+      console.log(`      Пересчитанный: "${recalculated}"`);
+      
+      // Обновляем в БД
+      this.db.prepare(`
+        UPDATE location_passwords 
+        SET normalized_password = ? 
+        WHERE location = ?
+      `).run(recalculated, location);
+      
+      return { 
+        original: row.password.trim(), 
+        normalized: recalculated 
+      };
+    }
+    
+    return { 
       original: row.password.trim(), 
       normalized: row.normalized_password.trim() 
-    } : null;
+    };
   }
 
   setPassword(location, password) {
-    const clean = password.trim();
-    // Нормализация: приводим к нижнему регистру и удаляем все не-буквенно-цифровые символы кроме подчеркивания
-    const normalized = clean.toLowerCase().replace(/[^a-z0-9_]/g, '');
+    console.log(`\n🔐 [setPassword] Сохранение пароля для локации: "${location}"`);
+    console.log(`   Введенный пароль: "${password}" (длина: ${password.length})`);
     
-    console.log(`🔐 Сохранение пароля для ${location}:`);
-    console.log(`   Оригинал: "${clean}"`);
-    console.log(`   Нормализованный: "${normalized}"`);
+    const clean = password.trim();
+    console.log(`   После trim: "${clean}" (длина: ${clean.length})`);
+    
+    // Нормализация: приводим к нижнему регистру и удаляем все не-буквенно-цифровые символы кроме подчеркивания
+    const normalized = this.normalizePassword(clean);
+    
+    console.log(`   Сохраняем в БД:`);
+    console.log(`      password: "${clean}"`);
+    console.log(`      normalized_password: "${normalized}"`);
     
     this.db.prepare(`
       INSERT OR REPLACE INTO location_passwords (location, password, normalized_password)
       VALUES (?, ?, ?)
     `).run(location, clean, normalized);
+    
+    // Проверяем, что сохранилось
+    const saved = this.db.prepare('SELECT password, normalized_password FROM location_passwords WHERE location = ?').get(location);
+    console.log(`   ✅ Проверка сохранения:`);
+    console.log(`      password в БД: "${saved.password}"`);
+    console.log(`      normalized_password в БД: "${saved.normalized_password}"`);
   }
 
   getAllPasswords() {
