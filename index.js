@@ -1,4 +1,4 @@
-// index.js — командный квест с полной админ-панелью и правильным синтаксисом кнопок
+// index.js — исправленный бэкенд с доступом к админ-панели и правильной обработкой initData
 import { Telegraf } from 'telegraf';
 import http from 'http';
 import { URL } from 'url';
@@ -11,7 +11,7 @@ const ADMIN_USER_IDS = process.env.ADMIN_USER_IDS;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://qweasader.github.io/cybervillage_defend/';
 const PORT = process.env.PORT || 3000;
-const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || 'quest-bot-webhook-secret-1234567890';
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
 
 if (!TELEGRAM_BOT_TOKEN) throw new Error('TELEGRAM_BOT_TOKEN не установлен');
 if (ADMIN_USER_IDS[0] === 123456789) throw new Error('Замените 123456789 на ваш реальный Telegram ID');
@@ -77,10 +77,18 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Извлечение userId из initData
+  // Извлечение userId из initData — КРИТИЧЕСКИ ВАЖНО: правильное имя заголовка
   let userId = null;
-  const initData = req.headers['x-telegram-init-data'] || '';
+  // Telegram Web Apps отправляет заголовок как 'X-Telegram-Init-Data' (с дефисами)
+  // Node.js приводит заголовки к нижнему регистру, но сохраняет дефисы
+  const initData = req.headers['x-telegram-init-data'] || req.headers['x-telegram-initdata'] || '';
   
+  // Для отладки (временно)
+  if (!initData) {
+    console.warn('⚠️ Отсутствует заголовок x-telegram-init-data');
+    console.warn('Все заголовки:', Object.keys(req.headers));
+  }
+
   if (initData) {
     try {
       const params = new URLSearchParams(initData);
@@ -88,14 +96,19 @@ const server = http.createServer(async (req, res) => {
       if (userParam) {
         const userObj = JSON.parse(decodeURIComponent(userParam));
         userId = String(userObj.id);
+        console.log(`✅ Извлечен userId: ${userId}`);
+      } else {
+        console.warn('⚠️ Параметр "user" не найден в initData');
       }
     } catch (e) {
-      console.error('Ошибка парсинга initData:', e.message);
+      console.error('❌ Ошибка парсинга initData:', e.message);
+      console.error('initData (первые 200 символов):', initData.substring(0, 200));
     }
   }
 
-  // Проверка регистрации
+  // Если не удалось извлечь userId — ошибка авторизации
   if (!userId) {
+    console.error('❌ Не авторизован: не удалось извлечь userId из initData');
     res.writeHead(401);
     res.end(JSON.stringify({ 
       success: false, 
@@ -353,19 +366,23 @@ const server = http.createServer(async (req, res) => {
   });
 });
 
-// ==================== TELEGRAM БОТ — РЕГИСТРАЦИЯ КОМАНД ====================
+// ==================== TELEGRAM БОТ — ИСПРАВЛЕНА ДОСТУПНОСТЬ АДМИН-ПАНЕЛИ ====================
 bot.use((ctx, next) => {
   ctx.isAdmin = ADMIN_USER_IDS.includes(ctx.from?.id);
   ctx.session = getSession(ctx.from?.id);
   return next();
 });
 
-// Команда /start — ПРИНУДИТЕЛЬНАЯ РЕГИСТРАЦИЯ
+// Команда /start — УЛУЧШЕНА ЛОГИКА ДЛЯ АДМИНА
 bot.start(async (ctx) => {
   const player = db.getPlayer(ctx.from.id);
+  const isRegistered = player && player.is_registered;
   
-  // Если уже зарегистрирован — показываем главное меню
-  if (player && player.is_registered) {
+  // Для админа всегда показываем кнопку админ-панели
+  const adminButton = ctx.isAdmin ? [{ text: '🔧 Админ-панель', callback_ 'admin_panel' }] : [];
+  
+  // Если зарегистрирован — показываем меню квеста
+  if (isRegistered) {
     const team = db.getTeamById(player.team_id);
     await ctx.replyWithHTML(
       `👋 <b>С возвращением, ${player.first_name}!</b>\n\n` +
@@ -376,8 +393,9 @@ bot.start(async (ctx) => {
         reply_markup: {
           inline_keyboard: [
             [{ text: '🚀 Начать квест', web_app: { url: `${FRONTEND_URL}?team=${team.code}` } }],
-            [{ text: '📊 Статистика команды', callback_data: 'team_stats' }],
-            [{ text: '👥 Состав команды', callback_data: 'team_members' }]
+            [{ text: '📊 Статистика команды', callback_ 'team_stats' }],
+            [{ text: '👥 Состав команды', callback_ 'team_members' }],
+            ...adminButton
           ]
         }
       }
@@ -385,7 +403,28 @@ bot.start(async (ctx) => {
     return;
   }
   
-  // Начинаем регистрацию
+  // Для незарегистрированного админа — меню с админ-панелью
+  if (ctx.isAdmin) {
+    await ctx.replyWithHTML(
+      `👋 <b>Добро пожаловать, Администратор!</b>\n\n` +
+      `🛡️ Вы можете:\n` +
+      `• Настроить квест через админ-панель\n` +
+      `• Создать команду и пройти квест как игрок\n` +
+      `• Проверить статистику`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔧 Админ-панель', callback_ 'admin_panel' }],
+            [{ text: '🆕 Создать команду', callback_ 'create_new_team' }],
+            [{ text: '❓ Как создать команду?', callback_ 'how_to_create' }]
+          ]
+        }
+      }
+    );
+    return;
+  }
+  
+  // Для обычного игрока — стандартная регистрация
   ctx.session.registerStep = 'team_code';
   await ctx.replyWithHTML(
     `👋 <b>Добро пожаловать в "Защиту Кибердеревни"!</b>\n\n` +
@@ -398,12 +437,31 @@ bot.start(async (ctx) => {
     {
       reply_markup: {
         inline_keyboard: [
-          [{ text: '🆕 Создать новую команду', callback_data: 'create_new_team' }],
-          [{ text: '❓ Как создать команду?', callback_data: 'how_to_create' }]
+          [{ text: '🆕 Создать новую команду', callback_ 'create_new_team' }],
+          [{ text: '❓ Как создать команду?', callback_ 'how_to_create' }]
         ]
       }
     }
   );
+});
+
+// Прямой доступ к админ-панели через кнопку
+bot.action('admin_panel', async (ctx) => {
+  if (!ctx.isAdmin) {
+    await ctx.answerCbQuery('Доступ запрещён', { show_alert: true });
+    return;
+  }
+  await ctx.answerCbQuery();
+  await showAdminMenu(ctx);
+});
+
+// Команда /admin — прямой доступ для админа
+bot.command('admin', async (ctx) => {
+  if (!ctx.isAdmin) {
+    await ctx.replyWithHTML(`🚫 <b>Доступ запрещён</b>\n\nВаш ID: <code>${ctx.from.id}</code>`);
+    return;
+  }
+  await showAdminMenu(ctx);
 });
 
 // Создание новой команды
@@ -427,7 +485,8 @@ bot.action('create_new_team', async (ctx) => {
       reply_markup: {
         inline_keyboard: [
           [{ text: '🚀 Начать квест', web_app: { url: `${FRONTEND_URL}?team=${teamCode}` } }],
-          [{ text: '📊 Статистика команды', callback_data: 'team_stats' }]
+          [{ text: '📊 Статистика команды', callback_ 'team_stats' }],
+          [{ text: '🔧 Админ-панель', callback_ 'admin_panel' }]
         ]
       }
     }
@@ -456,7 +515,7 @@ bot.action('how_to_create', async (ctx) => {
     {
       reply_markup: {
         inline_keyboard: [
-          [{ text: '🔙 Назад', callback_data: 'back_to_register' }]
+          [{ text: '🔙 Назад', callback_ 'back_to_register' }]
         ]
       }
     }
@@ -467,24 +526,44 @@ bot.action('how_to_create', async (ctx) => {
 bot.action('back_to_register', async (ctx) => {
   ctx.session.registerStep = 'team_code';
   await ctx.answerCbQuery();
-  await ctx.editMessageText(
-    `👋 <b>Добро пожаловать в "Защиту Кибердеревни"!</b>\n\n` +
-    `👾 Это <b>командный квест</b> для групп по 3 человека.\n\n` +
-    `<b>Как зарегистрироваться:</b>\n` +
-    `1️⃣ Получите код команды у капитана\n` +
-    `2️⃣ Введите код ниже (6 символов)\n` +
-    `3️⃣ Укажите ваше имя в команде\n\n` +
-    `<i>Пример кода: ABC123</i>`,
-    {
-      parse_mode: 'HTML',
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '🆕 Создать новую команду', callback_data: 'create_new_team' }],
-          [{ text: '❓ Как создать команду?', callback_data: 'how_to_create' }]
-        ]
+  
+  if (ctx.isAdmin) {
+    await ctx.editMessageText(
+      `👋 <b>Добро пожаловать, Администратор!</b>\n\n` +
+      `🛡️ Вы можете:\n` +
+      `• Настроить квест через админ-панель\n` +
+      `• Создать команду и пройти квест как игрок`,
+      {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔧 Админ-панель', callback_ 'admin_panel' }],
+            [{ text: '🆕 Создать команду', callback_ 'create_new_team' }],
+            [{ text: '❓ Как создать команду?', callback_ 'how_to_create' }]
+          ]
+        }
       }
-    }
-  );
+    );
+  } else {
+    await ctx.editMessageText(
+      `👋 <b>Добро пожаловать в "Защиту Кибердеревни"!</b>\n\n` +
+      `👾 Это <b>командный квест</b> для групп по 3 человека.\n\n` +
+      `<b>Как зарегистрироваться:</b>\n` +
+      `1️⃣ Получите код команды у капитана\n` +
+      `2️⃣ Введите код ниже (6 символов)\n` +
+      `3️⃣ Укажите ваше имя в команде\n\n` +
+      `<i>Пример кода: ABC123</i>`,
+      {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🆕 Создать новую команду', callback_ 'create_new_team' }],
+            [{ text: '❓ Как создать команду?', callback_ 'how_to_create' }]
+          ]
+        }
+      }
+    );
+  }
 });
 
 // Обработка текста — регистрация ИЛИ настройка админ-панели
@@ -551,6 +630,9 @@ bot.on('text', async (ctx) => {
     delete ctx.session.registerStep;
     delete ctx.session.teamCode;
     
+    // Для админа добавляем кнопку админ-панели
+    const adminButton = ctx.isAdmin ? [{ text: '🔧 Админ-панель', callback_ 'admin_panel' }] : [];
+    
     await ctx.replyWithHTML(
       `✅ <b>Регистрация завершена!</b>\n\n` +
       `👤 <b>Игрок:</b> ${playerName}\n` +
@@ -561,7 +643,8 @@ bot.on('text', async (ctx) => {
         reply_markup: {
           inline_keyboard: [
             [{ text: '🚀 Начать квест', web_app: { url: `${FRONTEND_URL}?team=${team.code}` } }],
-            [{ text: '📊 Статистика команды', callback_data: 'team_stats' }]
+            [{ text: '📊 Статистика команды', callback_ 'team_stats' }],
+            ...adminButton
           ]
         }
       }
@@ -729,303 +812,6 @@ bot.action('team_members', async (ctx) => {
   await ctx.replyWithHTML(membersText);
 });
 
-// Команда /admin — ПОЛНАЯ АДМИН-ПАНЕЛЬ С ПРАВИЛЬНЫМ СИНТАКСИСОМ КНОПОК
-bot.command('admin', async (ctx) => {
-  if (!ctx.isAdmin) {
-    await ctx.replyWithHTML(`🚫 <b>Доступ запрещён</b>\n\nВаш ID: <code>${ctx.from.id}</code>`);
-    return;
-  }
-  
-  await showAdminMenu(ctx);
-});
-
-// Главное меню админки — ВСЕ КНОПКИ С ПРАВИЛЬНЫМ СИНТАКСИСОМ callback_data
-async function showAdminMenu(ctx) {
-  const pwdCount = db.getAllPasswords().length;
-  const missionCount = db.getAllMissions().length;
-  const hintCount = db.db.prepare('SELECT COUNT(*) as cnt FROM hints').get().cnt;
-  
-  const message = `🔧 <b>Админ-панель квеста</b>\n\n` +
-    `✅ Паролей задано: ${pwdCount}/6\n` +
-    `✅ Заданий настроено: ${missionCount}/6\n` +
-    `✅ Подсказок создано: ${hintCount}\n\n` +
-    `<b>Выберите раздел для управления:</b>`;
-  
-  // ИСПРАВЛЕНО: ВСЕ КНОПКИ ИСПОЛЬЗУЮТ ПРАВИЛЬНЫЙ СИНТАКСИС callback_data
-  const keyboard = {
-    inline_keyboard: [
-      [{ text: '🔑 Пароли доступа', callback_data: 'admin_passwords' }],
-      [{ text: '📝 Задания локаций', callback_data: 'admin_missions' }],
-      [{ text: '💡 Подсказки', callback_data: 'admin_hints' }],
-      [{ text: '📊 Статистика', callback_data: 'admin_stats' }]
-    ]
-  };
-  
-  if (ctx.callbackQuery) {
-    await ctx.editMessageText(message, {
-      parse_mode: 'HTML',
-      reply_markup: keyboard
-    });
-    await ctx.answerCbQuery();
-  } else {
-    await ctx.reply(message, {
-      parse_mode: 'HTML',
-      reply_markup: keyboard
-    });
-  }
-}
-
-// ============ МЕНЮ ПАРОЛЕЙ ============
-bot.action('admin_passwords', async (ctx) => {
-  if (!ctx.isAdmin) return;
-  
-  const passwords = db.getAllPasswords();
-  
-  let msg = `🔑 <b>Пароли доступа к локациям</b>\n\n` +
-    `<i>Эти пароли игроки вводят для открытия задания на локации</i>\n\n`;
-  
-  Object.entries(LOCATIONS).forEach(([id, loc]) => {
-    const pwd = passwords.find(p => p.location === id);
-    msg += `${pwd ? '✅' : '❌'} ${loc.emoji} ${loc.name}: ` +
-           `<code>${pwd?.password || 'не задан'}</code>\n`;
-  });
-  
-  msg += `\n<b>Выберите локацию для настройки пароля:</b>`;
-  
-  // ИСПРАВЛЕНО: ВСЕ КНОПКИ С ПРАВИЛЬНЫМ СИНТАКСИСОМ callback_data
-  const keyboard = {
-    inline_keyboard: [
-      [
-        { text: '🚪 Врата', callback_data: 'set_pwd_gates' },
-        { text: '🛡️ Купол', callback_data: 'set_pwd_dome' }
-      ],
-      [
-        { text: '🪞 Зеркало', callback_data: 'set_pwd_mirror' },
-        { text: '🔮 Камень', callback_data: 'set_pwd_stone' }
-      ],
-      [
-        { text: '🏠 Хижина', callback_data: 'set_pwd_hut' },
-        { text: '👾 Логово', callback_data: 'set_pwd_lair' }
-      ],
-      [{ text: '🔙 Назад', callback_data: 'admin_main' }]
-    ]
-  };
-  
-  await ctx.editMessageText(msg, {
-    parse_mode: 'HTML',
-    reply_markup: keyboard
-  });
-  await ctx.answerCbQuery();
-});
-
-// Установка пароля для локации
-bot.action(/set_pwd_(.+)/, async (ctx) => {
-  if (!ctx.isAdmin) return;
-  
-  const locationId = ctx.match[1];
-  if (!LOCATIONS[locationId]) {
-    await ctx.answerCbQuery('Локация не найдена', { show_alert: true });
-    return;
-  }
-  
-  ctx.session.settingType = 'password';
-  ctx.session.location = locationId;
-  
-  await ctx.answerCbQuery();
-  await ctx.replyWithHTML(
-    `🔑 <b>Установка пароля для "${LOCATIONS[locationId].name}"</b>\n\n` +
-    `Отправьте пароль доступа к локации:\n` +
-    `<i>• Регистр важен!\n` +
-    `• Без пробелов в начале/конце\n` +
-    `• Пример: <code>gate2024</code></i>`
-  );
-});
-
-// ============ МЕНЮ ЗАДАНИЙ ============
-bot.action('admin_missions', async (ctx) => {
-  if (!ctx.isAdmin) return;
-  
-  const missions = db.getAllMissions();
-  
-  let msg = `📝 <b>Задания локаций</b>\n\n` +
-    `<i>Эти задания игроки видят после ввода пароля доступа</i>\n\n`;
-  
-  Object.entries(LOCATIONS).forEach(([id, loc]) => {
-    const mission = missions.find(m => m.location === id);
-    msg += `${mission ? '✅' : '❌'} ${loc.emoji} ${loc.name}\n`;
-  });
-  
-  msg += `\n<b>Выберите локацию для настройки задания:</b>`;
-  
-  // ИСПРАВЛЕНО: ВСЕ КНОПКИ С ПРАВИЛЬНЫМ СИНТАКСИСОМ callback_data
-  const keyboard = {
-    inline_keyboard: [
-      [
-        { text: '🚪 Врата', callback_data: 'set_mission_gates' },
-        { text: '🛡️ Купол', callback_data: 'set_mission_dome' }
-      ],
-      [
-        { text: '🪞 Зеркало', callback_data: 'set_mission_mirror' },
-        { text: '🔮 Камень', callback_data: 'set_mission_stone' }
-      ],
-      [
-        { text: '🏠 Хижина', callback_data: 'set_mission_hut' },
-        { text: '👾 Логово', callback_data: 'set_mission_lair' }
-      ],
-      [{ text: '🔙 Назад', callback_data: 'admin_main' }]
-    ]
-  };
-  
-  await ctx.editMessageText(msg, {
-    parse_mode: 'HTML',
-    reply_markup: keyboard
-  });
-  await ctx.answerCbQuery();
-});
-
-// Установка задания для локации
-bot.action(/set_mission_(.+)/, async (ctx) => {
-  if (!ctx.isAdmin) return;
-  
-  const locationId = ctx.match[1];
-  if (!LOCATIONS[locationId]) {
-    await ctx.answerCbQuery('Локация не найдена', { show_alert: true });
-    return;
-  }
-  
-  ctx.session.settingType = 'mission';
-  ctx.session.location = locationId;
-  ctx.session.step = 'text';
-  
-  await ctx.answerCbQuery();
-  await ctx.replyWithHTML(
-    `📝 <b>Настройка задания для "${LOCATIONS[locationId].name}"</b>\n\n` +
-    `Шаг 1/3: Отправьте <b>текст задания</b>:\n` +
-    `<i>Пример: "Найди амулет под древним дубом"</i>`
-  );
-});
-
-// ============ МЕНЮ ПОДСКАЗОК ============
-bot.action('admin_hints', async (ctx) => {
-  if (!ctx.isAdmin) return;
-  
-  const hintCounts = {};
-  Object.keys(LOCATIONS).forEach(loc => {
-    hintCounts[loc] = db.getHintsForLocation(loc).length;
-  });
-  
-  let msg = `💡 <b>Подсказки по локациям</b>\n\n` +
-    `<i>Игроки могут запросить до 3 подсказок за квест</i>\n\n`;
-  
-  Object.entries(LOCATIONS).forEach(([id, loc]) => {
-    msg += `${loc.emoji} ${loc.name}: ${hintCounts[id]} подсказок\n`;
-  });
-  
-  msg += `\n<b>Выберите действие:</b>`;
-  
-  // ИСПРАВЛЕНО: ВСЕ КНОПКИ С ПРАВИЛЬНЫМ СИНТАКСИСОМ callback_data
-  const keyboard = {
-    inline_keyboard: [
-      [{ text: '➕ Добавить подсказку', callback_data: 'add_hint' }],
-      [{ text: '🔙 Назад', callback_data: 'admin_main' }]
-    ]
-  };
-  
-  await ctx.editMessageText(msg, {
-    parse_mode: 'HTML',
-    reply_markup: keyboard
-  });
-  await ctx.answerCbQuery();
-});
-
-// Добавление подсказки — выбор локации
-bot.action('add_hint', async (ctx) => {
-  if (!ctx.isAdmin) return;
-  
-  // ИСПРАВЛЕНО: ВСЕ КНОПКИ С ПРАВИЛЬНЫМ СИНТАКСИСОМ callback_data
-  const keyboard = {
-    inline_keyboard: [
-      [
-        { text: '🚪 Врата', callback_data: 'hint_loc_gates' },
-        { text: '🛡️ Купол', callback_data: 'hint_loc_dome' }
-      ],
-      [
-        { text: '🪞 Зеркало', callback_data: 'hint_loc_mirror' },
-        { text: '🔮 Камень', callback_data: 'hint_loc_stone' }
-      ],
-      [
-        { text: '🏠 Хижина', callback_data: 'hint_loc_hut' },
-        { text: '👾 Логово', callback_data: 'hint_loc_lair' }
-      ],
-      [{ text: '🔙 Отмена', callback_data: 'admin_hints' }]
-    ]
-  };
-  
-  await ctx.replyWithHTML(
-    `➕ <b>Добавление подсказки</b>\n\nВыберите локацию:`,
-    { reply_markup: keyboard }
-  );
-  await ctx.answerCbQuery();
-});
-
-// Выбор локации для подсказки
-bot.action(/hint_loc_(.+)/, async (ctx) => {
-  if (!ctx.isAdmin) return;
-  
-  const locationId = ctx.match[1];
-  if (!LOCATIONS[locationId]) {
-    await ctx.answerCbQuery('Локация не найдена', { show_alert: true });
-    return;
-  }
-  
-  ctx.session.settingType = 'hint';
-  ctx.session.location = locationId;
-  ctx.session.step = 'level';
-  
-  await ctx.answerCbQuery();
-  await ctx.replyWithHTML(
-    `🔢 <b>Уровень подсказки для "${LOCATIONS[locationId].name}"</b>\n\n` +
-    `Отправьте уровень (1-3):\n` +
-    `1️⃣ — Общая подсказка\n` +
-    `2️⃣ — Конкретная подсказка\n` +
-    `3️⃣ — Детальная подсказка`
-  );
-});
-
-// ============ МЕНЮ СТАТИСТИКИ ============
-bot.action('admin_stats', async (ctx) => {
-  if (!ctx.isAdmin) return;
-  
-  const { totalTeams, completedTeams, totalPlayers } = db.getStats();
-  
-  const msg = `📊 <b>Статистика квеста</b>\n\n` +
-    `👥 Всего команд: ${totalTeams}\n` +
-    `🏆 Завершили квест: ${completedTeams}\n` +
-    `👤 Всего игроков: ${totalPlayers}\n\n` +
-    `<i>Статистика обновляется в реальном времени</i>`;
-  
-  // ИСПРАВЛЕНО: ВСЕ КНОПКИ С ПРАВИЛЬНЫМ СИНТАКСИСОМ callback_data
-  const keyboard = {
-    inline_keyboard: [
-      [{ text: '🔄 Обновить', callback_data: 'admin_stats' }],
-      [{ text: '🔙 Назад', callback_data: 'admin_main' }]
-    ]
-  };
-  
-  await ctx.editMessageText(msg, {
-    parse_mode: 'HTML',
-    reply_markup: keyboard
-  });
-  await ctx.answerCbQuery();
-});
-
-// Назад в главное меню
-bot.action('admin_main', async (ctx) => {
-  if (!ctx.isAdmin) return;
-  await ctx.answerCbQuery();
-  await showAdminMenu(ctx);
-});
-
 // Команда /stats
 bot.command('stats', async (ctx) => {
   const player = await db.getPlayer(ctx.from.id);
@@ -1086,6 +872,293 @@ bot.command('hint', async (ctx) => {
     `${hint.text}\n\n` +
     `Осталось подсказок у команды: ${hintsLeft}/3`
   );
+});
+
+// ==================== ПОЛНАЯ АДМИН-ПАНЕЛЬ С ПРАВИЛЬНЫМ СИНТАКСИСОМ ====================
+async function showAdminMenu(ctx) {
+  const pwdCount = db.getAllPasswords().length;
+  const missionCount = db.getAllMissions().length;
+  const hintCount = db.db.prepare('SELECT COUNT(*) as cnt FROM hints').get().cnt;
+  
+  const message = `🔧 <b>Админ-панель квеста</b>\n\n` +
+    `✅ Паролей задано: ${pwdCount}/6\n` +
+    `✅ Заданий настроено: ${missionCount}/6\n` +
+    `✅ Подсказок создано: ${hintCount}\n\n` +
+    `<b>Выберите раздел для управления:</b>`;
+  
+  // ИСПРАВЛЕНО: ВСЕ КНОПКИ ИСПОЛЬЗУЮТ ПРАВИЛЬНЫЙ СИНТАКСИС callback_data
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: '🔑 Пароли доступа', callback_ 'admin_passwords' }],
+      [{ text: '📝 Задания локаций', callback_ 'admin_missions' }],
+      [{ text: '💡 Подсказки', callback_ 'admin_hints' }],
+      [{ text: '📊 Статистика', callback_ 'admin_stats' }]
+    ]
+  };
+  
+  if (ctx.callbackQuery) {
+    await ctx.editMessageText(message, {
+      parse_mode: 'HTML',
+      reply_markup: keyboard
+    });
+    await ctx.answerCbQuery();
+  } else {
+    await ctx.reply(message, {
+      parse_mode: 'HTML',
+      reply_markup: keyboard
+    });
+  }
+}
+
+// ============ МЕНЮ ПАРОЛЕЙ ============
+bot.action('admin_passwords', async (ctx) => {
+  if (!ctx.isAdmin) return;
+  
+  const passwords = db.getAllPasswords();
+  
+  let msg = `🔑 <b>Пароли доступа к локациям</b>\n\n` +
+    `<i>Эти пароли игроки вводят для открытия задания на локации</i>\n\n`;
+  
+  Object.entries(LOCATIONS).forEach(([id, loc]) => {
+    const pwd = passwords.find(p => p.location === id);
+    msg += `${pwd ? '✅' : '❌'} ${loc.emoji} ${loc.name}: ` +
+           `<code>${pwd?.password || 'не задан'}</code>\n`;
+  });
+  
+  msg += `\n<b>Выберите локацию для настройки пароля:</b>`;
+  
+  // ИСПРАВЛЕНО: ВСЕ КНОПКИ С ПРАВИЛЬНЫМ СИНТАКСИСОМ callback_data
+  const keyboard = {
+    inline_keyboard: [
+      [
+        { text: '🚪 Врата', callback_ 'set_pwd_gates' },
+        { text: '🛡️ Купол', callback_ 'set_pwd_dome' }
+      ],
+      [
+        { text: '🪞 Зеркало', callback_ 'set_pwd_mirror' },
+        { text: '🔮 Камень', callback_ 'set_pwd_stone' }
+      ],
+      [
+        { text: '🏠 Хижина', callback_ 'set_pwd_hut' },
+        { text: '👾 Логово', callback_ 'set_pwd_lair' }
+      ],
+      [{ text: '🔙 Назад', callback_ 'admin_main' }]
+    ]
+  };
+  
+  await ctx.editMessageText(msg, {
+    parse_mode: 'HTML',
+    reply_markup: keyboard
+  });
+  await ctx.answerCbQuery();
+});
+
+// Установка пароля для локации
+bot.action(/set_pwd_(.+)/, async (ctx) => {
+  if (!ctx.isAdmin) return;
+  
+  const locationId = ctx.match[1];
+  if (!LOCATIONS[locationId]) {
+    await ctx.answerCbQuery('Локация не найдена', { show_alert: true });
+    return;
+  }
+  
+  ctx.session.settingType = 'password';
+  ctx.session.location = locationId;
+  
+  await ctx.answerCbQuery();
+  await ctx.replyWithHTML(
+    `🔑 <b>Установка пароля для "${LOCATIONS[locationId].name}"</b>\n\n` +
+    `Отправьте пароль доступа к локации:\n` +
+    `<i>• Регистр важен!\n` +
+    `• Без пробелов в начале/конце\n` +
+    `• Пример: <code>gate2024</code></i>`
+  );
+});
+
+// ============ МЕНЮ ЗАДАНИЙ ============
+bot.action('admin_missions', async (ctx) => {
+  if (!ctx.isAdmin) return;
+  
+  const missions = db.getAllMissions();
+  
+  let msg = `📝 <b>Задания локаций</b>\n\n` +
+    `<i>Эти задания игроки видят после ввода пароля доступа</i>\n\n`;
+  
+  Object.entries(LOCATIONS).forEach(([id, loc]) => {
+    const mission = missions.find(m => m.location === id);
+    msg += `${mission ? '✅' : '❌'} ${loc.emoji} ${loc.name}\n`;
+  });
+  
+  msg += `\n<b>Выберите локацию для настройки задания:</b>`;
+  
+  // ИСПРАВЛЕНО: ВСЕ КНОПКИ С ПРАВИЛЬНЫМ СИНТАКСИСОМ callback_data
+  const keyboard = {
+    inline_keyboard: [
+      [
+        { text: '🚪 Врата', callback_ 'set_mission_gates' },
+        { text: '🛡️ Купол', callback_ 'set_mission_dome' }
+      ],
+      [
+        { text: '🪞 Зеркало', callback_ 'set_mission_mirror' },
+        { text: '🔮 Камень', callback_ 'set_mission_stone' }
+      ],
+      [
+        { text: '🏠 Хижина', callback_ 'set_mission_hut' },
+        { text: '👾 Логово', callback_ 'set_mission_lair' }
+      ],
+      [{ text: '🔙 Назад', callback_ 'admin_main' }]
+    ]
+  };
+  
+  await ctx.editMessageText(msg, {
+    parse_mode: 'HTML',
+    reply_markup: keyboard
+  });
+  await ctx.answerCbQuery();
+});
+
+// Установка задания для локации
+bot.action(/set_mission_(.+)/, async (ctx) => {
+  if (!ctx.isAdmin) return;
+  
+  const locationId = ctx.match[1];
+  if (!LOCATIONS[locationId]) {
+    await ctx.answerCbQuery('Локация не найдена', { show_alert: true });
+    return;
+  }
+  
+  ctx.session.settingType = 'mission';
+  ctx.session.location = locationId;
+  ctx.session.step = 'text';
+  
+  await ctx.answerCbQuery();
+  await ctx.replyWithHTML(
+    `📝 <b>Настройка задания для "${LOCATIONS[locationId].name}"</b>\n\n` +
+    `Шаг 1/3: Отправьте <b>текст задания</b>:\n` +
+    `<i>Пример: "Найди амулет под древним дубом"</i>`
+  );
+});
+
+// ============ МЕНЮ ПОДСКАЗОК ============
+bot.action('admin_hints', async (ctx) => {
+  if (!ctx.isAdmin) return;
+  
+  const hintCounts = {};
+  Object.keys(LOCATIONS).forEach(loc => {
+    hintCounts[loc] = db.getHintsForLocation(loc).length;
+  });
+  
+  let msg = `💡 <b>Подсказки по локациям</b>\n\n` +
+    `<i>Игроки могут запросить до 3 подсказок за квест</i>\n\n`;
+  
+  Object.entries(LOCATIONS).forEach(([id, loc]) => {
+    msg += `${loc.emoji} ${loc.name}: ${hintCounts[id]} подсказок\n`;
+  });
+  
+  msg += `\n<b>Выберите действие:</b>`;
+  
+  // ИСПРАВЛЕНО: ВСЕ КНОПКИ С ПРАВИЛЬНЫМ СИНТАКСИСОМ callback_data
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: '➕ Добавить подсказку', callback_ 'add_hint' }],
+      [{ text: '🔙 Назад', callback_ 'admin_main' }]
+    ]
+  };
+  
+  await ctx.editMessageText(msg, {
+    parse_mode: 'HTML',
+    reply_markup: keyboard
+  });
+  await ctx.answerCbQuery();
+});
+
+// Добавление подсказки — выбор локации
+bot.action('add_hint', async (ctx) => {
+  if (!ctx.isAdmin) return;
+  
+  // ИСПРАВЛЕНО: ВСЕ КНОПКИ С ПРАВИЛЬНЫМ СИНТАКСИСОМ callback_data
+  const keyboard = {
+    inline_keyboard: [
+      [
+        { text: '🚪 Врата', callback_ 'hint_loc_gates' },
+        { text: '🛡️ Купол', callback_ 'hint_loc_dome' }
+      ],
+      [
+        { text: '🪞 Зеркало', callback_ 'hint_loc_mirror' },
+        { text: '🔮 Камень', callback_ 'hint_loc_stone' }
+      ],
+      [
+        { text: '🏠 Хижина', callback_ 'hint_loc_hut' },
+        { text: '👾 Логово', callback_ 'hint_loc_lair' }
+      ],
+      [{ text: '🔙 Отмена', callback_ 'admin_hints' }]
+    ]
+  };
+  
+  await ctx.replyWithHTML(
+    `➕ <b>Добавление подсказки</b>\n\nВыберите локацию:`,
+    { reply_markup: keyboard }
+  );
+  await ctx.answerCbQuery();
+});
+
+// Выбор локации для подсказки
+bot.action(/hint_loc_(.+)/, async (ctx) => {
+  if (!ctx.isAdmin) return;
+  
+  const locationId = ctx.match[1];
+  if (!LOCATIONS[locationId]) {
+    await ctx.answerCbQuery('Локация не найдена', { show_alert: true });
+    return;
+  }
+  
+  ctx.session.settingType = 'hint';
+  ctx.session.location = locationId;
+  ctx.session.step = 'level';
+  
+  await ctx.answerCbQuery();
+  await ctx.replyWithHTML(
+    `🔢 <b>Уровень подсказки для "${LOCATIONS[locationId].name}"</b>\n\n` +
+    `Отправьте уровень (1-3):\n` +
+    `1️⃣ — Общая подсказка\n` +
+    `2️⃣ — Конкретная подсказка\n` +
+    `3️⃣ — Детальная подсказка`
+  );
+});
+
+// ============ МЕНЮ СТАТИСТИКИ ============
+bot.action('admin_stats', async (ctx) => {
+  if (!ctx.isAdmin) return;
+  
+  const { totalTeams, completedTeams, totalPlayers } = db.getStats();
+  
+  const msg = `📊 <b>Статистика квеста</b>\n\n` +
+    `👥 Всего команд: ${totalTeams}\n` +
+    `🏆 Завершили квест: ${completedTeams}\n` +
+    `👤 Всего игроков: ${totalPlayers}\n\n` +
+    `<i>Статистика обновляется в реальном времени</i>`;
+  
+  // ИСПРАВЛЕНО: ВСЕ КНОПКИ С ПРАВИЛЬНЫМ СИНТАКСИСОМ callback_data
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: '🔄 Обновить', callback_ 'admin_stats' }],
+      [{ text: '🔙 Назад', callback_ 'admin_main' }]
+    ]
+  };
+  
+  await ctx.editMessageText(msg, {
+    parse_mode: 'HTML',
+    reply_markup: keyboard
+  });
+  await ctx.answerCbQuery();
+});
+
+// Назад в главное меню админки
+bot.action('admin_main', async (ctx) => {
+  if (!ctx.isAdmin) return;
+  await ctx.answerCbQuery();
+  await showAdminMenu(ctx);
 });
 
 // Обработка ошибок бота
