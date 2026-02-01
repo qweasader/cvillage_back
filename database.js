@@ -1,4 +1,4 @@
-// database.js — исправленная версия с правильной инициализацией игроков
+// database.js — поддержка командного квеста
 import sqlite3 from 'better-sqlite3';
 
 export class QuestDatabase {
@@ -8,14 +8,12 @@ export class QuestDatabase {
   }
 
   initDatabase() {
-    // Игроки — ИСПРАВЛЕНО: правильные значения по умолчанию
+    // Команды (новая таблица)
     this.db.exec(`
-      CREATE TABLE IF NOT EXISTS players (
-        id TEXT PRIMARY KEY,
-        username TEXT,
-        first_name TEXT NOT NULL,
-        last_name TEXT,
-        team_id TEXT,
+      CREATE TABLE IF NOT EXISTS teams (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
         current_location TEXT DEFAULT 'gates',
         unlocked_locations TEXT DEFAULT '["gates"]',
         completed_locations TEXT DEFAULT '[]',
@@ -25,7 +23,23 @@ export class QuestDatabase {
       )
     `);
 
-    // Пароли
+    // Игроки (обновлённая структура)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS players (
+        id TEXT PRIMARY KEY,
+        team_id INTEGER NOT NULL,
+        username TEXT,
+        first_name TEXT NOT NULL,
+        last_name TEXT,
+        is_registered BOOLEAN DEFAULT 0,
+        registered_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        last_activity DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (team_id) REFERENCES teams(id)
+      )
+    `);
+
+    // Пароли доступа
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS location_passwords (
         location TEXT PRIMARY KEY,
@@ -59,69 +73,163 @@ export class QuestDatabase {
       CREATE TABLE IF NOT EXISTS events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         type TEXT NOT NULL,
+        team_id INTEGER,
         user_id TEXT,
         location TEXT,
         data TEXT DEFAULT '{}',
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (team_id) REFERENCES teams(id)
       )
     `);
 
-    console.log('✅ База данных инициализирована');
+    // Индексы
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_players_team ON players(team_id)');
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_events_team ON events(team_id)');
+    
+    console.log('✅ База данных инициализирована (командный режим)');
   }
 
-  // ИГРОКИ
+  // ============ КОМАНДЫ ============
+  getTeamByCode(code) {
+    return this.db.prepare('SELECT * FROM teams WHERE code = ?').get(code.toUpperCase().trim());
+  }
+
+  getTeamById(teamId) {
+    return this.db.prepare('SELECT * FROM teams WHERE id = ?').get(teamId);
+  }
+
+  createTeam(code, name) {
+    // Генерируем уникальный код, если не задан
+    const teamCode = code || this.generateTeamCode();
+    const cleanName = name.trim() || `Команда ${teamCode}`;
+    
+    this.db.prepare(`
+      INSERT INTO teams (code, name, unlocked_locations)
+      VALUES (?, ?, '["gates"]')
+    `).run(teamCode.toUpperCase(), cleanName);
+    
+    const team = this.getTeamByCode(teamCode);
+    this.logEvent('team_created', team.id, null, { code: teamCode, name: cleanName });
+    return team;
+  }
+
+  generateTeamCode() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let code = '';
+    for (let i = 0; i < 6; i++) {
+      code += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    // Проверяем уникальность
+    if (this.getTeamByCode(code)) {
+      return this.generateTeamCode();
+    }
+    return code;
+  }
+
+  // ============ ИГРОКИ ============
   getPlayer(userId) {
     return this.db.prepare('SELECT * FROM players WHERE id = ?').get(String(userId));
   }
 
-  createOrUpdatePlayer(userId, data) {
-    userId = String(userId); // Гарантируем строковый тип
+  // Регистрация игрока в команде
+  registerPlayer(userId, teamCode, playerName = null) {
+    // Получаем или создаём команду
+    let team = this.getTeamByCode(teamCode);
+    if (!team) {
+      team = this.createTeam(teamCode, `Команда ${teamCode}`);
+    }
+    
+    // Обновляем или создаём игрока
     const existing = this.getPlayer(userId);
+    const cleanName = (playerName || '').trim() || 'Игрок';
     
     if (existing) {
       this.db.prepare(`
         UPDATE players 
-        SET username = ?, first_name = ?, last_name = ?, team_id = ?, last_activity = CURRENT_TIMESTAMP
+        SET team_id = ?, first_name = ?, is_registered = 1, registered_at = CURRENT_TIMESTAMP, last_activity = CURRENT_TIMESTAMP
         WHERE id = ?
-      `).run(data.username || null, data.first_name || '', data.last_name || null, data.team_id || null, userId);
+      `).run(team.id, cleanName, userId);
     } else {
-      // ИСПРАВЛЕНО: правильная инициализация для нового игрока
       this.db.prepare(`
-        INSERT INTO players (id, username, first_name, last_name, team_id)
-        VALUES (?, ?, ?, ?, ?)
-      `).run(
-        userId,
-        data.username || null,
-        data.first_name || 'Игрок',
-        data.last_name || null,
-        data.team_id || null
-      );
+        INSERT INTO players (id, team_id, first_name, is_registered, registered_at)
+        VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP)
+      `).run(String(userId), team.id, cleanName);
     }
-    return this.getPlayer(userId);
+    
+    const player = this.getPlayer(userId);
+    this.logEvent('player_registered', team.id, null, { 
+      userId, 
+      playerName: cleanName,
+      teamCode: team.code,
+      teamName: team.name
+    });
+    
+    return { player, team };
   }
 
-  completeLocation(userId, locationId) {
-    userId = String(userId);
+  // Проверка регистрации
+  isPlayerRegistered(userId) {
     const player = this.getPlayer(userId);
-    if (!player) return;
+    return player && player.is_registered;
+  }
+
+  // Завершение локации (на уровне команды)
+  completeLocationForTeam(teamId, locationId) {
+    const team = this.getTeamById(teamId);
+    if (!team) return;
     
-    let completed = JSON.parse(player.completed_locations || '[]');
+    let completed = JSON.parse(team.completed_locations || '[]');
     if (!completed.includes(locationId)) {
       completed.push(locationId);
-      this.db.prepare('UPDATE players SET completed_locations = ?, current_location = ?, last_activity = CURRENT_TIMESTAMP WHERE id = ?')
-        .run(JSON.stringify(completed), locationId, userId);
+      this.db.prepare(`
+        UPDATE teams 
+        SET completed_locations = ?, current_location = ?, last_activity = CURRENT_TIMESTAMP 
+        WHERE id = ?
+      `).run(JSON.stringify(completed), locationId, teamId);
+      
+      // Разблокируем следующую локацию
+      this.unlockNextLocationForTeam(teamId);
     }
   }
 
-  useHint(userId) {
-    userId = String(userId);
-    const player = this.getPlayer(userId);
-    if (!player || player.hints_used >= 3) return false;
-    this.db.prepare('UPDATE players SET hints_used = hints_used + 1, last_activity = CURRENT_TIMESTAMP WHERE id = ?').run(userId);
+  // Разблокировка следующей локации
+  unlockNextLocationForTeam(teamId) {
+    const team = this.getTeamById(teamId);
+    if (!team) return;
+    
+    const allLocations = ['gates', 'dome', 'mirror', 'stone', 'hut', 'lair'];
+    const unlocked = JSON.parse(team.unlocked_locations || '["gates"]');
+    const completed = JSON.parse(team.completed_locations || '[]');
+    
+    const lastCompletedIndex = Math.max(
+      ...completed.map(loc => allLocations.indexOf(loc)),
+      -1
+    );
+    
+    const nextIndex = lastCompletedIndex + 1;
+    if (nextIndex < allLocations.length && !unlocked.includes(allLocations[nextIndex])) {
+      unlocked.push(allLocations[nextIndex]);
+      this.db.prepare('UPDATE teams SET unlocked_locations = ? WHERE id = ?')
+        .run(JSON.stringify(unlocked), teamId);
+    }
+  }
+
+  // Использование подсказки (на уровне команды)
+  useHintForTeam(teamId) {
+    const team = this.getTeamById(teamId);
+    if (!team || team.hints_used >= 3) return false;
+    
+    this.db.prepare('UPDATE teams SET hints_used = hints_used + 1, last_activity = CURRENT_TIMESTAMP WHERE id = ?')
+      .run(teamId);
     return true;
   }
 
-  // ПАРОЛИ — ИСПРАВЛЕНО: всегда возвращаем строку без пробелов
+  // Получение состава команды
+  getTeamMembers(teamId) {
+    return this.db.prepare('SELECT * FROM players WHERE team_id = ? ORDER BY registered_at').all(teamId);
+  }
+
+  // ============ ПАРОЛИ, ЗАДАНИЯ, ПОДСКАЗКИ (без изменений) ============
   getPassword(location) {
     const row = this.db.prepare('SELECT password FROM location_passwords WHERE location = ?').get(location);
     return row ? row.password.trim() : null;
@@ -135,11 +243,6 @@ export class QuestDatabase {
     `).run(location, clean);
   }
 
-  getAllPasswords() {
-    return this.db.prepare('SELECT * FROM location_passwords').all();
-  }
-
-  // ЗАДАНИЯ
   getMission(location) {
     return this.db.prepare('SELECT * FROM missions WHERE location = ?').get(location);
   }
@@ -151,11 +254,6 @@ export class QuestDatabase {
     `).run(location, text.trim(), answer.trim(), imageUrl || null);
   }
 
-  getAllMissions() {
-    return this.db.prepare('SELECT * FROM missions').all();
-  }
-
-  // ПОДСКАЗКИ
   getHint(location, level) {
     return this.db.prepare(`
       SELECT * FROM hints 
@@ -173,12 +271,30 @@ export class QuestDatabase {
     `).run(location, level, text.trim());
   }
 
-  // СОБЫТИЯ
-  logEvent(type, userId = null, location = null, data = {}) {
-    if (userId) userId = String(userId);
+  // ============ СОБЫТИЯ ============
+  logEvent(type, teamId = null, location = null, data = {}) {
     this.db.prepare(`
-      INSERT INTO events (type, user_id, location, data)
-      VALUES (?, ?, ?, ?)
-    `).run(type, userId, location, JSON.stringify(data));
+      INSERT INTO events (type, team_id, user_id, location, data)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(
+      type, 
+      teamId, 
+      data.userId || null, 
+      location, 
+      JSON.stringify(data)
+    );
+  }
+
+  // ============ СТАТИСТИКА ============
+  getStats() {
+    const totalTeams = this.db.prepare('SELECT COUNT(*) as cnt FROM teams').get().cnt;
+    const completedTeams = this.db.prepare(`
+      SELECT COUNT(*) as cnt FROM teams 
+      WHERE json_array_length(completed_locations) >= 6
+    `).get().cnt;
+    
+    const totalPlayers = this.db.prepare('SELECT COUNT(*) as cnt FROM players WHERE is_registered = 1').get().cnt;
+    
+    return { totalTeams, completedTeams, totalPlayers };
   }
 }
