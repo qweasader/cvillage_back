@@ -1,4 +1,4 @@
-// index.js — исправленный бэкенд с доступом к админ-панели и правильной обработкой initData
+// index.js — исправленная версия с надежной проверкой паролей
 import { Telegraf } from 'telegraf';
 import http from 'http';
 import { URL } from 'url';
@@ -11,7 +11,7 @@ const ADMIN_USER_IDS = process.env.ADMIN_USER_IDS;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://qweasader.github.io/cybervillage_defend/';
 const PORT = process.env.PORT || 3000;
-const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || 'quest-bot-webhook-secret-1234567890';
 
 if (!TELEGRAM_BOT_TOKEN) throw new Error('TELEGRAM_BOT_TOKEN не установлен');
 if (ADMIN_USER_IDS[0] === 123456789) throw new Error('Замените 123456789 на ваш реальный Telegram ID');
@@ -31,7 +31,6 @@ const LOCATIONS = {
 
 const ALL_LOCATIONS = Object.keys(LOCATIONS);
 
-// Сессии
 const sessions = new Map();
 function getSession(userId) {
   if (!sessions.has(userId)) sessions.set(userId, {});
@@ -84,45 +83,33 @@ const server = http.createServer(async (req, res) => {
   
   if (initData) {
     try {
-      console.log(`📥 Получен запрос с initData (длина: ${initData.length} символов)`);
-      
       const params = new URLSearchParams(initData);
       const userParam = params.get('user');
       
       if (userParam) {
         const userObj = JSON.parse(decodeURIComponent(userParam));
         userId = String(userObj.id);
-        console.log(`✅ Успешно извлечен userId: ${userId}`);
-      } else {
-        console.warn('⚠️ Параметр "user" не найден в initData');
       }
     } catch (e) {
       console.error('❌ Ошибка парсинга initData:', e.message);
     }
-  } else {
-    console.error('❌ ЗАГОЛОВОК X-Telegram-Init-Data ОТСУТСТВУЕТ!');
-    console.error('Все заголовки:', JSON.stringify(req.headers, null, 2));
   }
 
-  // Если не удалось извлечь userId — ошибка авторизации
   if (!userId) {
-    console.error('❌ КРИТИЧЕСКАЯ ОШИБКА: Не удалось извлечь userId из initData');
+    console.error('❌ Не удалось извлечь userId из initData');
     res.writeHead(401, {
       'Content-Type': 'application/json',
       'Access-Control-Allow-Origin': '*'
     });
     res.end(JSON.stringify({ 
       success: false, 
-      message: 'Не авторизован. Откройте приложение ТОЛЬКО через кнопку в боте!',
-      debug: 'initData_missing'
+      message: 'Не авторизован. Откройте приложение через кнопку в боте!'
     }));
     return;
   }
 
-  // Проверяем регистрацию игрока ПО USER ID
   const player = db.getPlayer(userId);
   if (!player || !player.is_registered) {
-    console.warn(`⚠️ Игрок с userId=${userId} не зарегистрирован`);
     res.writeHead(403, {
       'Content-Type': 'application/json',
       'Access-Control-Allow-Origin': '*'
@@ -130,13 +117,11 @@ const server = http.createServer(async (req, res) => {
     res.end(JSON.stringify({ 
       success: false, 
       message: 'Сначала зарегистрируйтесь в боте! Напишите /start и введите код команды.',
-      requiresRegistration: true,
-      userId: userId
+      requiresRegistration: true
     }));
     return;
   }
 
-  // Получаем команду игрока
   const team = db.getTeamById(player.team_id);
   if (!team) {
     res.writeHead(500, {
@@ -157,7 +142,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const data = body ? JSON.parse(body) : {};
 
-      // Проверка пароля доступа
+      // ПРОВЕРКА ПАРОЛЯ — ИСПРАВЛЕНО: НАДЕЖНАЯ НОРМАЛИЗАЦИЯ
       if (pathname === '/check-password' && req.method === 'POST') {
         const { location, password } = data;
         
@@ -189,12 +174,36 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        // Проверяем пароль
-        const correctPassword = db.getPassword(location);
-        const cleanInputPassword = password.trim();
-        const isCorrect = correctPassword && cleanInputPassword === correctPassword;
+        // Получаем пароль из БД
+        const passwordData = db.getPassword(location);
+        
+        if (!passwordData) {
+          console.warn(`⚠️ Пароль для локации ${location} не настроен`);
+          res.writeHead(200, {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+          });
+          res.end(JSON.stringify({ 
+            success: false, 
+            message: 'Пароль для этой локации ещё не настроен администратором.'
+          }));
+          return;
+        }
 
-        console.log(`🔑 Команда ${team.code}: пароль=${cleanInputPassword}, результат=${isCorrect}`);
+        // Нормализуем введенный пароль (так же, как при сохранении)
+        const cleanInput = password.trim();
+        const normalizedInput = cleanInput.toLowerCase().replace(/[^a-z0-9_]/g, '');
+        
+        // Сравниваем нормализованные версии
+        const isCorrect = normalizedInput === passwordData.normalized;
+
+        // ДЕТАЛЬНОЕ ЛОГИРОВАНИЕ ДЛЯ ОТЛАДКИ
+        console.log(`🔑 Проверка пароля для локации "${location}":`);
+        console.log(`   Введено (оригинал): "${cleanInput}"`);
+        console.log(`   Введено (нормализ.): "${normalizedInput}"`);
+        console.log(`   В БД (оригинал): "${passwordData.original}"`);
+        console.log(`   В БД (нормализ.): "${passwordData.normalized}"`);
+        console.log(`   Результат: ${isCorrect ? '✅ ВЕРНО' : '❌ НЕВЕРНО'}`);
 
         if (isCorrect) {
           db.logEvent('location_unlocked', team.id, location, { userId });
@@ -210,16 +219,23 @@ const server = http.createServer(async (req, res) => {
             teamName: team.name
           }));
         } else {
-          db.logEvent('wrong_password', team.id, location, { userId, input: cleanInputPassword.substring(0, 20) });
+          db.logEvent('wrong_password', team.id, location, { 
+            userId, 
+            input: cleanInput.substring(0, 20),
+            normalized: normalizedInput
+          });
+          
           res.writeHead(200, {
             'Content-Type': 'application/json',
             'Access-Control-Allow-Origin': '*'
           });
           res.end(JSON.stringify({ 
             success: false, 
-            message: correctPassword 
-              ? 'Неверный пароль! Проверьте регистр и отсутствие пробелов.' 
-              : 'Пароль для этой локации ещё не настроен администратором.'
+            message: 'Неверный пароль! Проверьте написание и попробуйте снова.',
+            debug: {
+              inputNormalized: normalizedInput,
+              expectedNormalized: passwordData.normalized
+            }
           }));
         }
         return;
@@ -238,7 +254,6 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        // Проверяем, что локация разблокирована для команды
         const unlocked = JSON.parse(team.unlocked_locations || '["gates"]');
         if (!unlocked.includes(location)) {
           res.writeHead(403, {
@@ -265,7 +280,6 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        // Получаем состав команды
         const members = db.getTeamMembers(team.id);
         
         res.writeHead(200, {
@@ -314,7 +328,10 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        const isCorrect = answer.trim().toLowerCase() === mission.answer.toLowerCase();
+        // Нормализация ответа (без учета регистра и лишних пробелов)
+        const cleanAnswer = answer.trim().toLowerCase();
+        const correctAnswer = mission.answer.trim().toLowerCase();
+        const isCorrect = cleanAnswer === correctAnswer;
         
         if (isCorrect) {
           db.completeLocationForTeam(team.id, location);
@@ -394,7 +411,6 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        // Используем подсказку на уровне команды
         db.useHintForTeam(team.id);
         db.logEvent('hint_used', team.id, location, { userId, level: hintLevel });
 
@@ -992,7 +1008,7 @@ bot.action(/set_pwd_(.+)/, async (ctx) => {
   await ctx.replyWithHTML(
     `🔑 <b>Установка пароля для "${LOCATIONS[locationId].name}"</b>\n\n` +
     `Отправьте пароль доступа к локации:\n` +
-    `<i>• Регистр важен!\n` +
+    `<i>• Регистр НЕ важен (система игнорирует его)\n` +
     `• Без пробелов в начале/конце\n` +
     `• Пример: <code>gate2024</code></i>`
   );
