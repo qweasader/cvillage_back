@@ -1,4 +1,4 @@
-// database.js — полная переработка с детальным логированием
+// database.js — с детальным логированием каждого этапа
 import sqlite3 from 'better-sqlite3';
 
 export class QuestDatabase {
@@ -8,17 +8,23 @@ export class QuestDatabase {
   }
 
   initDatabase() {
+    console.log('\n' + '='.repeat(80));
+    console.log('🗄️  ИНИЦИАЛИЗАЦИЯ БАЗЫ ДАННЫХ');
+    console.log('='.repeat(80));
+    
     // Проверяем структуру существующей таблицы
     const tableInfo = this.db.prepare("PRAGMA table_info(location_passwords)").all();
     const hasNormalizedColumn = tableInfo.some(col => col.name === 'normalized_password');
     
     console.log('🔍 Проверка структуры таблицы location_passwords:');
-    console.log(`   Столбцы: ${tableInfo.map(col => col.name).join(', ')}`);
-    console.log(`   normalized_password существует: ${hasNormalizedColumn ? '✅' : '❌'}`);
+    tableInfo.forEach(col => {
+      console.log(`   • ${col.name} (тип: ${col.type}, notnull: ${col.notnull})`);
+    });
+    console.log(`   normalized_password существует: ${hasNormalizedColumn ? '✅ ДА' : '❌ НЕТ'}`);
     
     // Если столбца нет — добавляем его
     if (!hasNormalizedColumn) {
-      console.log('🔧 Добавление столбца normalized_password в существующую таблицу...');
+      console.log('\n🔧 Добавление столбца normalized_password в существующую таблицу...');
       try {
         this.db.exec(`
           ALTER TABLE location_passwords 
@@ -27,13 +33,12 @@ export class QuestDatabase {
         console.log('✅ Столбец normalized_password добавлен успешно');
       } catch (e) {
         console.error('❌ Ошибка добавления столбца:', e.message);
-        // Если не удалось добавить — пересоздаем таблицу
         console.log('🔄 Пересоздание таблицы location_passwords...');
         this.db.exec('DROP TABLE IF EXISTS location_passwords');
       }
     }
 
-    // Команды
+    // Создание всех таблиц
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS teams (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -48,7 +53,6 @@ export class QuestDatabase {
       )
     `);
 
-    // Игроки
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS players (
         id TEXT PRIMARY KEY,
@@ -64,7 +68,6 @@ export class QuestDatabase {
       )
     `);
 
-    // Пароли доступа — С ОБЯЗАТЕЛЬНЫМ СТОЛБЦОМ normalized_password
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS location_passwords (
         location TEXT PRIMARY KEY,
@@ -73,7 +76,6 @@ export class QuestDatabase {
       )
     `);
 
-    // Задания
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS missions (
         location TEXT PRIMARY KEY,
@@ -83,7 +85,6 @@ export class QuestDatabase {
       )
     `);
 
-    // Подсказки
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS hints (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -94,7 +95,6 @@ export class QuestDatabase {
       )
     `);
 
-    // События
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -108,32 +108,155 @@ export class QuestDatabase {
       )
     `);
 
-    // Индексы
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_players_team ON players(team_id)');
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_events_team ON events(team_id)');
     
-    console.log('✅ База данных инициализирована (командный режим)');
-    console.log('📊 Текущее состояние паролей:');
+    console.log('\n✅ База данных инициализирована');
+    
+    // Выводим все пароли из БД для проверки
+    console.log('\n📊 ТЕКУЩИЕ ПАРОЛИ В БАЗЕ ДАННЫХ:');
     const passwords = this.db.prepare('SELECT location, password, normalized_password FROM location_passwords').all();
-    passwords.forEach(p => {
-      console.log(`   ${p.location}: "${p.password}" → normalized: "${p.normalized_password}"`);
+    if (passwords.length === 0) {
+      console.log('   ⚠️  Нет сохраненных паролей');
+    } else {
+      passwords.forEach((p, i) => {
+        console.log(`   ${i + 1}. ${p.location}:`);
+        console.log(`      Оригинал: "${p.password}" (длина: ${p.password.length})`);
+        console.log(`      normalized: "${p.normalized_password}" (длина: ${p.normalized_password.length})`);
+      });
+    }
+    console.log('='.repeat(80) + '\n');
+  }
+
+  // ============ ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ============
+  normalizePassword(password) {
+    console.log(`\n🔍 [normalizePassword] Начало нормализации:`);
+    console.log(`   Входной пароль: "${password}" (длина: ${password.length})`);
+    
+    const original = password;
+    const trimmed = password.trim();
+    console.log(`   После trim: "${trimmed}" (длина: ${trimmed.length})`);
+    
+    const lowercased = trimmed.toLowerCase();
+    console.log(`   После toLowerCase: "${lowercased}" (длина: ${lowercased.length})`);
+    
+    const normalized = lowercased.replace(/[^a-z0-9_]/g, '');
+    console.log(`   После удаления спецсимволов: "${normalized}" (длина: ${normalized.length})`);
+    console.log(`   Результат нормализации: "${normalized}"`);
+    
+    return normalized;
+  }
+
+  // ============ ПАРОЛИ — С МАКСИМАЛЬНЫМ ЛОГИРОВАНИЕМ ============
+  getPassword(location) {
+    console.log(`\n🔐 [getPassword] Запрос пароля для локации: "${location}"`);
+    
+    // Выполняем запрос к БД
+    const queryStart = Date.now();
+    const row = this.db.prepare('SELECT password, normalized_password FROM location_passwords WHERE location = ?').get(location);
+    const queryTime = Date.now() - queryStart;
+    
+    console.log(`   ⏱️  Время выполнения запроса: ${queryTime}мс`);
+    
+    if (!row) {
+      console.error(`   ❌ Пароль для локации "${location}" НЕ НАЙДЕН в базе данных!`);
+      
+      // Выводим все пароли для отладки
+      console.log(`   📊 Все пароли в БД:`);
+      const allPasswords = this.db.prepare('SELECT location, password FROM location_passwords').all();
+      if (allPasswords.length === 0) {
+        console.log(`      ⚠️  База данных пуста!`);
+      } else {
+        allPasswords.forEach(p => console.log(`      • ${p.location}: "${p.password}"`));
+      }
+      
+      return null;
+    }
+    
+    console.log(`   ✅ Найден пароль в БД:`);
+    console.log(`      password: "${row.password}" (длина: ${row.password.length})`);
+    console.log(`      normalized_password: "${row.normalized_password}" (длина: ${row.normalized_password.length})`);
+    
+    // Если normalized_password пустой — пересчитываем
+    if (!row.normalized_password || row.normalized_password.trim() === '') {
+      console.warn(`   ⚠️ normalized_password пустой! Пересчитываем...`);
+      const recalculated = this.normalizePassword(row.password);
+      console.log(`      Пересчитанный: "${recalculated}"`);
+      
+      // Обновляем в БД
+      this.db.prepare(`
+        UPDATE location_passwords 
+        SET normalized_password = ? 
+        WHERE location = ?
+      `).run(recalculated, location);
+      
+      console.log(`      ✅ normalized_password обновлен в БД`);
+      
+      return { 
+        original: row.password.trim(), 
+        normalized: recalculated 
+      };
+    }
+    
+    return { 
+      original: row.password.trim(), 
+      normalized: row.normalized_password.trim() 
+    };
+  }
+
+  setPassword(location, password) {
+    console.log(`\n🔐 [setPassword] Сохранение пароля`);
+    console.log(`   Локация: "${location}"`);
+    console.log(`   Введенный пароль: "${password}" (длина: ${password.length})`);
+    
+    const clean = password.trim();
+    console.log(`   После trim: "${clean}" (длина: ${clean.length})`);
+    
+    // Нормализация
+    const normalized = this.normalizePassword(clean);
+    
+    console.log(`\n💾 Сохранение в БД:`);
+    console.log(`   location: "${location}"`);
+    console.log(`   password: "${clean}"`);
+    console.log(`   normalized_password: "${normalized}"`);
+    
+    // Сохраняем в БД
+    const saveStart = Date.now();
+    this.db.prepare(`
+      INSERT OR REPLACE INTO location_passwords (location, password, normalized_password)
+      VALUES (?, ?, ?)
+    `).run(location, clean, normalized);
+    const saveTime = Date.now() - saveStart;
+    
+    console.log(`   ⏱️  Время сохранения: ${saveTime}мс`);
+    
+    // Проверяем, что сохранилось
+    const saved = this.db.prepare('SELECT password, normalized_password FROM location_passwords WHERE location = ?').get(location);
+    console.log(`\n✅ Проверка сохранения:`);
+    console.log(`   password в БД: "${saved.password}" (длина: ${saved.password.length})`);
+    console.log(`   normalized_password в БД: "${saved.normalized_password}" (длина: ${saved.normalized_password.length})`);
+    
+    // Сравниваем сохраненные значения с ожидаемыми
+    if (saved.password === clean && saved.normalized_password === normalized) {
+      console.log(`   ✅ Сохранение прошло успешно!`);
+    } else {
+      console.error(`   ❌ ОШИБКА: сохраненные значения не совпадают с ожидаемыми!`);
+      console.error(`      Ожидалось password: "${clean}"`);
+      console.error(`      Получено password: "${saved.password}"`);
+      console.error(`      Ожидалось normalized: "${normalized}"`);
+      console.error(`      Получено normalized: "${saved.normalized_password}"`);
+    }
+    
+    // Выводим все пароли после сохранения
+    console.log(`\n📊 Все пароли в БД после сохранения:`);
+    const allPasswords = this.db.prepare('SELECT location, password, normalized_password FROM location_passwords').all();
+    allPasswords.forEach(p => {
+      console.log(`   • ${p.location}: "${p.password}" → normalized: "${p.normalized_password}"`);
     });
   }
 
-  // ============ ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ДЛЯ ОТЛАДКИ ============
-  normalizePassword(password) {
-    const original = password;
-    const trimmed = password.trim();
-    const lowercased = trimmed.toLowerCase();
-    const normalized = lowercased.replace(/[^a-z0-9_]/g, '');
-    
-    console.log(`🔍 Нормализация пароля:`);
-    console.log(`   Исходный: "${original}" (длина: ${original.length})`);
-    console.log(`   После trim: "${trimmed}" (длина: ${trimmed.length})`);
-    console.log(`   После toLowerCase: "${lowercased}" (длина: ${lowercased.length})`);
-    console.log(`   После удаления спецсимволов: "${normalized}" (длина: ${normalized.length})`);
-    
-    return normalized;
+  getAllPasswords() {
+    return this.db.prepare('SELECT * FROM location_passwords').all();
   }
 
   // ============ КОМАНДЫ ============
@@ -263,79 +386,6 @@ export class QuestDatabase {
 
   getTeamMembers(teamId) {
     return this.db.prepare('SELECT * FROM players WHERE team_id = ? ORDER BY registered_at').all(teamId);
-  }
-
-  // ============ ПАРОЛИ — ПОЛНОСТЬЮ ПЕРЕДЕЛАНАЯ ВЕРСИЯ С ЛОГИРОВАНИЕМ ============
-  getPassword(location) {
-    console.log(`\n🔐 [getPassword] Запрос пароля для локации: "${location}"`);
-    
-    const row = this.db.prepare('SELECT password, normalized_password FROM location_passwords WHERE location = ?').get(location);
-    
-    if (!row) {
-      console.log(`   ❌ Пароль для локации "${location}" НЕ НАЙДЕН в базе данных`);
-      console.log(`   📊 Текущие пароли в БД:`);
-      const allPasswords = this.db.prepare('SELECT location, password FROM location_passwords').all();
-      allPasswords.forEach(p => console.log(`      ${p.location}: "${p.password}"`));
-      return null;
-    }
-    
-    console.log(`   ✅ Найден пароль в БД:`);
-    console.log(`      Оригинал: "${row.password}"`);
-    console.log(`      normalized_password: "${row.normalized_password}"`);
-    
-    // Если normalized_password пустой — пересчитываем
-    if (!row.normalized_password || row.normalized_password.trim() === '') {
-      console.log(`   ⚠️ normalized_password пустой! Пересчитываем...`);
-      const recalculated = this.normalizePassword(row.password);
-      console.log(`      Пересчитанный: "${recalculated}"`);
-      
-      // Обновляем в БД
-      this.db.prepare(`
-        UPDATE location_passwords 
-        SET normalized_password = ? 
-        WHERE location = ?
-      `).run(recalculated, location);
-      
-      return { 
-        original: row.password.trim(), 
-        normalized: recalculated 
-      };
-    }
-    
-    return { 
-      original: row.password.trim(), 
-      normalized: row.normalized_password.trim() 
-    };
-  }
-
-  setPassword(location, password) {
-    console.log(`\n🔐 [setPassword] Сохранение пароля для локации: "${location}"`);
-    console.log(`   Введенный пароль: "${password}" (длина: ${password.length})`);
-    
-    const clean = password.trim();
-    console.log(`   После trim: "${clean}" (длина: ${clean.length})`);
-    
-    // Нормализация: приводим к нижнему регистру и удаляем все не-буквенно-цифровые символы кроме подчеркивания
-    const normalized = this.normalizePassword(clean);
-    
-    console.log(`   Сохраняем в БД:`);
-    console.log(`      password: "${clean}"`);
-    console.log(`      normalized_password: "${normalized}"`);
-    
-    this.db.prepare(`
-      INSERT OR REPLACE INTO location_passwords (location, password, normalized_password)
-      VALUES (?, ?, ?)
-    `).run(location, clean, normalized);
-    
-    // Проверяем, что сохранилось
-    const saved = this.db.prepare('SELECT password, normalized_password FROM location_passwords WHERE location = ?').get(location);
-    console.log(`   ✅ Проверка сохранения:`);
-    console.log(`      password в БД: "${saved.password}"`);
-    console.log(`      normalized_password в БД: "${saved.normalized_password}"`);
-  }
-
-  getAllPasswords() {
-    return this.db.prepare('SELECT * FROM location_passwords').all();
   }
 
   // ============ ЗАДАНИЯ ============
