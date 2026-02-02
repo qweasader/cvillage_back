@@ -622,7 +622,7 @@ bot.start(async (ctx) => {
         reply_markup: {
           inline_keyboard: [
             // КНОПКА ВЕДЁТ НА КОРНЕВОЙ URL RAILWAY С ПАРАМЕТРОМ TEAM
-            [{ text: '🚀 Начать квест', web_app: { url: `${FRONTEND_URL}?team=${team.code}` } }],
+            [{ text: '🚀 Начать квест', web_app: { url: `${FRONTEND_URL}?team=${teamCode}` } }],
             [{ text: '📊 Статистика команды', callback_data: 'team_stats' }],
             [{ text: '👥 Состав команды', callback_data: 'team_members' }],
             ...adminButton
