@@ -1,57 +1,24 @@
-// database.js — с поддержкой нормализации ответов
+// database.js — с защитой от недопустимых ответов и улучшенной нормализацией
 import sqlite3 from 'better-sqlite3';
 
 export class QuestDatabase {
   constructor() {
     this.db = sqlite3('quest.db');
     this.initDatabase();
-    // Граф зависимостей локаций
     this.locationGraph = this.buildLocationGraph();
   }
 
-  // ============ ПОСТРОЕНИЕ ГРАФА ЗАВИСИМОСТЕЙ ============
   buildLocationGraph() {
     return {
-      gates: { 
-        name: 'Врата Кибердеревни', 
-        emoji: '🚪', 
-        next: ['dome', 'hut', 'mirror'],
-        order: 1 
-      },
-      dome: { 
-        name: 'Купол Защиты', 
-        emoji: '🛡️', 
-        next: ['mirror', 'stone', 'hut'], 
-        order: 2 
-      },
-      mirror: { 
-        name: 'Зеркало Истины', 
-        emoji: '🪞', 
-        next: ['stone', 'hut', 'lair'], 
-        order: 3 
-      },
-      stone: { 
-        name: 'Камень Пророчеств', 
-        emoji: '🔮', 
-        next: ['hut', 'lair'], 
-        order: 4 
-      },
-      hut: { 
-        name: 'Хижина Хранителя', 
-        emoji: '🏠', 
-        next: ['lair'], 
-        order: 5 
-      },
-      lair: { 
-        name: 'Логово Вируса', 
-        emoji: '👾', 
-        next: [], 
-        order: 6 
-      }
+      gates: { name: 'Врата Кибердеревни', emoji: '🚪', next: ['dome', 'hut', 'mirror'], order: 1 },
+      dome: { name: 'Купол Защиты', emoji: '🛡️', next: ['mirror', 'stone', 'hut'], order: 2 },
+      mirror: { name: 'Зеркало Истины', emoji: '🪞', next: ['stone', 'hut', 'lair'], order: 3 },
+      stone: { name: 'Камень Пророчеств', emoji: '🔮', next: ['hut', 'lair'], order: 4 },
+      hut: { name: 'Хижина Хранителя', emoji: '🏠', next: ['lair'], order: 5 },
+      lair: { name: 'Логово Вируса', emoji: '👾', next: [], order: 6 }
     };
   }
 
-  // ============ ГЕНЕРАЦИЯ УНИКАЛЬНОГО МАРШРУТА ============
   generateUniqueRoute() {
     const route = ['gates'];
     let current = 'gates';
@@ -86,14 +53,12 @@ export class QuestDatabase {
   }
 
   initDatabase() {
-    // Проверяем структуру существующей таблицы
     const tableInfo = this.db.prepare("PRAGMA table_info(teams)").all();
     const hasRouteColumn = tableInfo.some(col => col.name === 'route');
     
     console.log('🔍 Проверка структуры таблицы teams:');
     console.log(`   route существует: ${hasRouteColumn ? '✅' : '❌'}`);
     
-    // Если столбца нет — добавляем его
     if (!hasRouteColumn) {
       console.log('🔧 Добавление столбца route в существующую таблицу...');
       try {
@@ -109,7 +74,6 @@ export class QuestDatabase {
       }
     }
 
-    // Команды (упрощённая структура)
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS teams (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -125,7 +89,6 @@ export class QuestDatabase {
       )
     `);
 
-    // Игроки (упрощённая структура — каждый игрок = одна команда)
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS players (
         id TEXT PRIMARY KEY,
@@ -139,7 +102,6 @@ export class QuestDatabase {
       )
     `);
 
-    // Пароли доступа
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS location_passwords (
         location TEXT PRIMARY KEY,
@@ -148,7 +110,23 @@ export class QuestDatabase {
       )
     `);
 
-    // Задания — ДОБАВЛЕН СТОЛБЕЦ ДЛЯ НОРМАЛИЗОВАННОГО ОТВЕТА
+    // ИСПРАВЛЕНО: добавлена проверка на существование столбца
+    const missionTableInfo = this.db.prepare("PRAGMA table_info(missions)").all();
+    const hasNormalizedAnswer = missionTableInfo.some(col => col.name === 'normalized_answer');
+    
+    if (!hasNormalizedAnswer) {
+      console.log('🔧 Добавление столбца normalized_answer в таблицу missions...');
+      try {
+        this.db.exec(`
+          ALTER TABLE missions 
+          ADD COLUMN normalized_answer TEXT NOT NULL DEFAULT ''
+        `);
+        console.log('✅ Столбец normalized_answer добавлен успешно');
+      } catch (e) {
+        console.error('❌ Ошибка добавления столбца normalized_answer:', e.message);
+      }
+    }
+
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS missions (
         location TEXT PRIMARY KEY,
@@ -159,7 +137,6 @@ export class QuestDatabase {
       )
     `);
 
-    // Подсказки
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS hints (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -170,7 +147,6 @@ export class QuestDatabase {
       )
     `);
 
-    // События
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -184,42 +160,15 @@ export class QuestDatabase {
       )
     `);
 
-    // Индексы
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_players_id ON players(id)');
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_teams_player ON teams(player_id)');
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_events_team ON events(team_id)');
     
     console.log('✅ База данных инициализирована (упрощённая регистрация)');
-    
-    // Проверяем структуру таблицы заданий и добавляем столбец при необходимости
-    const missionTableInfo = this.db.prepare("PRAGMA table_info(missions)").all();
-    const hasNormalizedAnswer = missionTableInfo.some(col => col.name === 'normalized_answer');
-    
-    if (!hasNormalizedAnswer) {
-      console.log('🔧 Добавление столбца normalized_answer в таблицу missions...');
-      try {
-        this.db.exec(`
-          ALTER TABLE missions 
-          ADD COLUMN normalized_answer TEXT NOT NULL DEFAULT ''
-        `);
-        console.log('✅ Столбец normalized_answer добавлен успешно');
-        
-        // Пересчитываем нормализованные ответы для существующих заданий
-        console.log('🔄 Пересчёт нормализованных ответов для существующих заданий...');
-        const missions = this.db.prepare('SELECT location, answer FROM missions').all();
-        missions.forEach(m => {
-          const normalized = this.normalizeAnswer(m.answer);
-          this.db.prepare('UPDATE missions SET normalized_answer = ? WHERE location = ?')
-            .run(normalized, m.location);
-          console.log(`   ${m.location}: "${m.answer}" → normalized: "${normalized}"`);
-        });
-      } catch (e) {
-        console.error('❌ Ошибка добавления столбца normalized_answer:', e.message);
-      }
-    }
   }
 
-  // ============ РАБОТА С КОМАНДАМИ ============
+  // ... остальные методы без изменений (getTeamByPlayerId, getTeamById, createTeamForPlayer, generateTeamCode, getCurrentLocationForTeam, getNextLocationForTeam, unlockNextLocationForTeam, completeLocationForTeam, getPlayer, isPlayerRegistered) ...
+
   getTeamByPlayerId(playerId) {
     return this.db.prepare('SELECT * FROM teams WHERE player_id = ?').get(String(playerId));
   }
@@ -235,13 +184,11 @@ export class QuestDatabase {
     
     console.log(`🆕 Создание команды для игрока ${playerId} с маршрутом: ${route.join(' → ')}`);
     
-    // Сначала регистрируем игрока
     this.db.prepare(`
       INSERT OR REPLACE INTO players (id, first_name, is_registered, registered_at)
       VALUES (?, ?, 1, CURRENT_TIMESTAMP)
     `).run(String(playerId), cleanName);
     
-    // Создаём команду
     this.db.prepare(`
       INSERT INTO teams (player_id, name, route, unlocked_locations)
       VALUES (?, ?, ?, ?)
@@ -270,7 +217,6 @@ export class QuestDatabase {
     return code;
   }
 
-  // ============ РАБОТА С МАРШРУТАМИ ============
   getCurrentLocationForTeam(teamId) {
     const team = this.getTeamById(teamId);
     if (!team) return null;
@@ -352,7 +298,6 @@ export class QuestDatabase {
     console.log(`✅ Команда ${team.id} завершила локацию "${locationId}". Прогресс: ${completed.length}/6`);
   }
 
-  // ============ ИГРОКИ ============
   getPlayer(userId) {
     return this.db.prepare('SELECT * FROM players WHERE id = ?').get(String(userId));
   }
@@ -362,7 +307,8 @@ export class QuestDatabase {
     return player && player.is_registered;
   }
 
-  // ============ ПАРОЛИ ============
+  // ... пароли без изменений ...
+
   getPassword(location) {
     console.log(`\n🔐 [getPassword] Запрос пароля для локации: "${location}"`);
     
@@ -446,14 +392,30 @@ export class QuestDatabase {
     return normalized;
   }
 
-  // ============ ЗАДАНИЯ С НОРМАЛИЗАЦИЕЙ ОТВЕТОВ ============
+  // ============ ЗАДАНИЯ С ЗАЩИТОЙ ОТ НЕДОПУСТИМЫХ ОТВЕТОВ ============
   getMission(location) {
     return this.db.prepare('SELECT * FROM missions WHERE location = ?').get(location);
   }
 
+  // ИСПРАВЛЕНО: добавлена проверка на недопустимые ответы
   setMission(location, text, answer, imageUrl = null) {
     const cleanAnswer = answer.trim();
+    
+    // КРИТИЧЕСКАЯ ПРОВЕРКА: ответ не может быть пустым или "-"
+    if (!cleanAnswer || cleanAnswer === '-') {
+      const errorMsg = `❌ ОШИБКА: Недопустимый ответ "${answer}" для локации ${location}. Ответ не может быть пустым или "-".`;
+      console.error(errorMsg);
+      throw new Error(errorMsg);
+    }
+    
     const normalizedAnswer = this.normalizeAnswer(cleanAnswer);
+    
+    // ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: нормализованный ответ не может быть пустым
+    if (!normalizedAnswer || normalizedAnswer.trim() === '') {
+      const errorMsg = `❌ ОШИБКА: Нормализованный ответ пустой для локации ${location}. Исходный ответ: "${answer}"`;
+      console.error(errorMsg);
+      throw new Error(errorMsg);
+    }
     
     console.log(`\n📝 [setMission] Сохранение задания для "${location}"`);
     console.log(`   Текст: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`);
@@ -466,23 +428,35 @@ export class QuestDatabase {
       VALUES (?, ?, ?, ?, ?)
     `).run(location, text.trim(), cleanAnswer, normalizedAnswer, imageUrl || null);
     
-    // Проверка сохранения
     const saved = this.db.prepare('SELECT answer, normalized_answer FROM missions WHERE location = ?').get(location);
     console.log(`   ✅ Проверка сохранения:`);
     console.log(`      answer в БД: "${saved.answer}"`);
     console.log(`      normalized_answer в БД: "${saved.normalized_answer}"`);
+    
+    // Финальная проверка
+    if (!saved.normalized_answer || saved.normalized_answer.trim() === '') {
+      console.error(`   ❌ КРИТИЧЕСКАЯ ОШИБКА: normalized_answer пустой после сохранения!`);
+      throw new Error(`Не удалось сохранить нормализованный ответ для локации ${location}`);
+    }
   }
 
   getAllMissions() {
     return this.db.prepare('SELECT * FROM missions').all();
   }
 
-  // НОРМАЛИЗАЦИЯ ОТВЕТОВ (аналогично паролям)
+  // УЛУЧШЕННАЯ НОРМАЛИЗАЦИЯ ОТВЕТОВ С ПРОВЕРКОЙ
   normalizeAnswer(answer) {
     const original = answer;
     const trimmed = answer.trim();
     const lowercased = trimmed.toLowerCase();
-    const normalized = lowercased.replace(/[^a-z0-9а-яё_]/g, ''); // Поддержка кириллицы
+    // Поддержка кириллицы и латиницы, удаление ВСЕХ спецсимволов кроме букв и цифр
+    const normalized = lowercased.replace(/[^a-zа-яё0-9]/g, '');
+    
+    if (normalized === '') {
+      console.warn(`⚠️ Предупреждение: нормализованный ответ пустой для исходного ответа: "${original}"`);
+      console.warn(`   После trim: "${trimmed}"`);
+      console.warn(`   После toLowerCase: "${lowercased}"`);
+    }
     
     console.log(`🔍 Нормализация ответа:`);
     console.log(`   Исходный: "${original}" (длина: ${original.length})`);
@@ -493,7 +467,8 @@ export class QuestDatabase {
     return normalized;
   }
 
-  // ============ ПОДСКАЗКИ ============
+  // ... подсказки, события, статистика без изменений ...
+
   getHint(location, level) {
     return this.db.prepare(`
       SELECT * FROM hints 
@@ -515,7 +490,6 @@ export class QuestDatabase {
     return this.db.prepare('SELECT * FROM hints WHERE location = ? ORDER BY level').all(location);
   }
 
-  // ============ СОБЫТИЯ ============
   logEvent(type, teamId = null, location = null, data = {}) {
     this.db.prepare(`
       INSERT INTO events (type, team_id, user_id, location, data)
@@ -529,7 +503,6 @@ export class QuestDatabase {
     );
   }
 
-  // ============ СТАТИСТИКА ============
   getStats() {
     const totalTeams = this.db.prepare('SELECT COUNT(*) as cnt FROM teams').get().cnt;
     const completedTeams = this.db.prepare(`
