@@ -1,4 +1,4 @@
-// index.js — полная версия с правильной структурой сервера и исправленной проверкой ответов
+// index.js — полная версия с исправленной проверкой ответов и защитой от недопустимых значений
 import { Telegraf } from 'telegraf';
 import http from 'http';
 import fs from 'fs';
@@ -349,12 +349,12 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      // ============ ПРОВЕРКА ОТВЕТА С ДЕТАЛЬНЫМ ЛОГИРОВАНИЕМ ============
+      // ============ ПРОВЕРКА ОТВЕТА С ЗАЩИТОЙ ОТ ПУСТЫХ ОТВЕТОВ ============
       if (pathname === '/check-answer' && req.method === 'POST') {
         const { answer } = data;
         
         console.log(`\n✅ [ПРОВЕРКА ОТВЕТА] Локация: "${currentLocation}"`);
-        console.log(`   Введённый ответ: "${answer}" (длина: ${answer ? answer.length : 0})`);
+        console.log(`   Введённый ответ: "${answer}"`);
         
         if (!answer) {
           res.writeHead(400, { 
@@ -375,6 +375,28 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         
+        // КРИТИЧЕСКАЯ ПРОВЕРКА: ответ должен быть настроен корректно
+        if (!mission.normalized_answer || mission.normalized_answer.trim() === '') {
+          console.error(`❌ КРИТИЧЕСКАЯ ОШИБКА: Для локации "${currentLocation}" не настроен нормализованный ответ!`);
+          console.error(`   answer в БД: "${mission.answer}"`);
+          console.error(`   normalized_answer в БД: "${mission.normalized_answer}"`);
+          
+          res.writeHead(500, { 
+            'Content-Type': 'application/json; charset=utf-8',
+            'Access-Control-Allow-Origin': '*'
+          });
+          res.end(JSON.stringify({ 
+            success: false, 
+            message: 'Задание настроено некорректно. Обратитесь к администратору квеста.',
+            debug: {
+              location: currentLocation,
+              answerInDb: mission.answer,
+              normalizedAnswerInDb: mission.normalized_answer
+            }
+          }));
+          return;
+        }
+        
         // ДЕТАЛЬНАЯ НОРМАЛИЗАЦИЯ И СРАВНЕНИЕ
         console.log(`\n🔍 Нормализация ответов:`);
         console.log(`   Ожидаемый ответ (из БД): "${mission.answer}"`);
@@ -392,18 +414,6 @@ const server = http.createServer(async (req, res) => {
         console.log(`   Введённый (норм.): "${normalizedInput}" (длина: ${normalizedInput.length})`);
         console.log(`   Ожидаемый (норм.): "${mission.normalized_answer}" (длина: ${mission.normalized_answer.length})`);
         console.log(`   Результат: ${isCorrect ? '✅ СОВПАДАЕТ' : '❌ НЕ СОВПАДАЕТ'}`);
-        
-        // Побайтовое сравнение при несовпадении
-        if (!isCorrect && normalizedInput.length === mission.normalized_answer.length) {
-          for (let i = 0; i < normalizedInput.length; i++) {
-            if (normalizedInput[i] !== mission.normalized_answer[i]) {
-              console.log(`   ⚠️ Первое различие на позиции ${i}:`);
-              console.log(`      Введено: "${normalizedInput[i]}" (код ${normalizedInput.charCodeAt(i)})`);
-              console.log(`      Ожидаемо: "${mission.normalized_answer[i]}" (код ${mission.normalized_answer.charCodeAt(i)})`);
-              break;
-            }
-          }
-        }
         
         if (isCorrect) {
           db.completeLocationForTeam(team.id, currentLocation);
@@ -435,10 +445,6 @@ const server = http.createServer(async (req, res) => {
           db.logEvent('wrong_answer', team.id, currentLocation, { userId, input: answer.trim().substring(0, 20) });
           
           console.log(`\n❌ Ответ НЕВЕРНЫЙ!`);
-          console.log(`   Подробности:`);
-          console.log(`      Введено (оригинал): "${answer}"`);
-          console.log(`      Введено (норм.): "${normalizedInput}"`);
-          console.log(`      Ожидаемо (норм.): "${mission.normalized_answer}"`);
           
           res.writeHead(200, { 
             'Content-Type': 'application/json; charset=utf-8',
@@ -450,10 +456,7 @@ const server = http.createServer(async (req, res) => {
             debug: {
               inputRaw: answer,
               inputNormalized: normalizedInput,
-              expectedNormalized: mission.normalized_answer,
-              inputLength: answer.length,
-              normalizedLength: normalizedInput.length,
-              expectedLength: mission.normalized_answer.length
+              expectedNormalized: mission.normalized_answer
             }
           }));
         }
@@ -531,8 +534,7 @@ const server = http.createServer(async (req, res) => {
   });
 });
 
-// ... ВСЯ ЛОГИКА БОТА БЕЗ ИЗМЕНЕНИЙ (полный код всех обработчиков) ...
-
+// ==================== TELEGRAM БОТ — ПОЛНЫЙ КОД С ИСПРАВЛЕННЫМИ ОБРАБОТЧИКАМИ ====================
 bot.use((ctx, next) => {
   ctx.isAdmin = ADMIN_USER_IDS.includes(ctx.from?.id);
   ctx.session = getSession(ctx.from?.id);
@@ -554,7 +556,7 @@ bot.start(async (ctx) => {
         reply_markup: {
           inline_keyboard: [
             [{ text: '🚀 Начать квест', web_app: { url: `${FRONTEND_URL}` } }],
-            [{ text: '📊 Статистика', callback_data:'team_stats' }]
+            [{ text: '📊 Статистика', callback_data: 'team_stats' }]
           ]
         }
       }
@@ -580,7 +582,7 @@ bot.start(async (ctx) => {
       reply_markup: {
         inline_keyboard: [
           [{ text: '🚀 Начать квест', web_app: { url: `${FRONTEND_URL}` } }],
-          [{ text: '📊 Статистика', callback_data:'team_stats' }]
+          [{ text: '📊 Статистика', callback_data: 'team_stats' }]
         ]
       }
     }
@@ -709,10 +711,10 @@ async function showAdminMenu(ctx) {
   
   const keyboard = {
     inline_keyboard: [
-      [{ text: '🔑 Пароли доступа', callback_data:'admin_passwords' }],
+      [{ text: '🔑 Пароли доступа', callback_data: 'admin_passwords' }],
       [{ text: '📝 Задания локаций', callback_data: 'admin_missions' }],
-      [{ text: '💡 Подсказки', callback_data:'admin_hints' }],
-      [{ text: '📊 Статистика', callback_data:'admin_stats' }]
+      [{ text: '💡 Подсказки', callback_data: 'admin_hints' }],
+      [{ text: '📊 Статистика', callback_data: 'admin_stats' }]
     ]
   };
   
@@ -749,18 +751,18 @@ bot.action('admin_passwords', async (ctx) => {
   const keyboard = {
     inline_keyboard: [
       [
-        { text: '🚪 Врата', callback_data:'set_pwd_gates' },
-        { text: '🛡️ Купол', callback_data:'set_pwd_dome' }
+        { text: '🚪 Врата', callback_data: 'set_pwd_gates' },
+        { text: '🛡️ Купол', callback_data: 'set_pwd_dome' }
       ],
       [
-        { text: '🪞 Зеркало', callback_data:'set_pwd_mirror' },
-        { text: '🔮 Камень', callback_data:'set_pwd_stone' }
+        { text: '🪞 Зеркало', callback_data: 'set_pwd_mirror' },
+        { text: '🔮 Камень', callback_data: 'set_pwd_stone' }
       ],
       [
-        { text: '🏠 Хижина', callback_data:'set_pwd_hut' },
-        { text: '👾 Логово', callback_data:'set_pwd_lair' }
+        { text: '🏠 Хижина', callback_data: 'set_pwd_hut' },
+        { text: '👾 Логово', callback_data: 'set_pwd_lair' }
       ],
-      [{ text: '🔙 Назад', callback_data:'admin_main' }]
+      [{ text: '🔙 Назад', callback_data: 'admin_main' }]
     ]
   };
   
@@ -811,18 +813,18 @@ bot.action('admin_missions', async (ctx) => {
   const keyboard = {
     inline_keyboard: [
       [
-        { text: '🚪 Врата', callback_data:'set_mission_gates' },
-        { text: '🛡️ Купол', callback_data:'set_mission_dome' }
+        { text: '🚪 Врата', callback_data: 'set_mission_gates' },
+        { text: '🛡️ Купол', callback_data: 'set_mission_dome' }
       ],
       [
         { text: '🪞 Зеркало', callback_data: 'set_mission_mirror' },
-        { text: '🔮 Камень', callback_data:'set_mission_stone' }
+        { text: '🔮 Камень', callback_data: 'set_mission_stone' }
       ],
       [
-        { text: '🏠 Хижина', callback_data:'set_mission_hut' },
+        { text: '🏠 Хижина', callback_data: 'set_mission_hut' },
         { text: '👾 Логово', callback_data: 'set_mission_lair' }
       ],
-      [{ text: '🔙 Назад', callback_data:'admin_main' }]
+      [{ text: '🔙 Назад', callback_data: 'admin_main' }]
     ]
   };
   
@@ -873,8 +875,8 @@ bot.action('admin_hints', async (ctx) => {
   
   const keyboard = {
     inline_keyboard: [
-      [{ text: '➕ Добавить подсказку', callback_data:'add_hint' }],
-      [{ text: '🔙 Назад', callback_data:'admin_main' }]
+      [{ text: '➕ Добавить подсказку', callback_data: 'add_hint' }],
+      [{ text: '🔙 Назад', callback_data: 'admin_main' }]
     ]
   };
   
@@ -891,18 +893,18 @@ bot.action('add_hint', async (ctx) => {
   const keyboard = {
     inline_keyboard: [
       [
-        { text: '🚪 Врата', callback_data:'hint_loc_gates' },
+        { text: '🚪 Врата', callback_data: 'hint_loc_gates' },
         { text: '🛡️ Купол', callback_data: 'hint_loc_dome' }
       ],
       [
-        { text: '🪞 Зеркало', callback_data:'hint_loc_mirror' },
-        { text: '🔮 Камень', callback_data:'hint_loc_stone' }
+        { text: '🪞 Зеркало', callback_data: 'hint_loc_mirror' },
+        { text: '🔮 Камень', callback_data: 'hint_loc_stone' }
       ],
       [
-        { text: '🏠 Хижина', callback_data:'hint_loc_hut' },
-        { text: '👾 Логово', callback_data:'hint_loc_lair' }
+        { text: '🏠 Хижина', callback_data: 'hint_loc_hut' },
+        { text: '👾 Логово', callback_data: 'hint_loc_lair' }
       ],
-      [{ text: '🔙 Отмена', callback_data:'admin_hints' }]
+      [{ text: '🔙 Отмена', callback_data: 'admin_hints' }]
     ]
   };
   
@@ -949,8 +951,8 @@ bot.action('admin_stats', async (ctx) => {
   
   const keyboard = {
     inline_keyboard: [
-      [{ text: '🔄 Обновить', callback_data:'admin_stats' }],
-      [{ text: '🔙 Назад', callback_data:'admin_main' }]
+      [{ text: '🔄 Обновить', callback_data: 'admin_stats' }],
+      [{ text: '🔙 Назад', callback_data: 'admin_main' }]
     ]
   };
   
@@ -998,12 +1000,23 @@ bot.on('text', async (ctx) => {
       await ctx.replyWithHTML(
         `📝 <b>Настройка задания для "${db.locationGraph[location].name}"</b>\n\n` +
         `Шаг 2/3: Отправьте <b>правильный ответ</b>:\n` +
-        `<i>Пример: "дуб2024"</i>`
+        `<i>Пример: "дуб2024"</i>\n\n` +
+        `<b>ВАЖНО:</b> Ответ не может быть "-" или пустым!`
       );
       return;
     }
     
     if (settingType === 'mission' && step === 'answer') {
+      // КРИТИЧЕСКАЯ ПРОВЕРКА: ответ не может быть "-" или пустым
+      if (!text || text.trim() === '' || text.trim() === '-') {
+        await ctx.replyWithHTML(
+          `❌ <b>Ошибка!</b>\n\n` +
+          `Ответ не может быть пустым или "-".\n\n` +
+          `Пожалуйста, введите корректный ответ:`
+        );
+        return;
+      }
+      
       ctx.session.missionAnswer = text;
       ctx.session.step = 'image';
       await ctx.replyWithHTML(
@@ -1016,21 +1029,42 @@ bot.on('text', async (ctx) => {
     
     if (settingType === 'mission' && step === 'image') {
       const imageUrl = text !== '-' ? text : null;
-      db.setMission(location, ctx.session.missionText, text, imageUrl);
       
-      await ctx.replyWithHTML(
-        `✅ <b>Задание сохранено!</b>\n\n` +
-        `Локация: ${db.locationGraph[location].name}\n` +
-        `Текст: ${ctx.session.missionText.substring(0, 50)}...\n` +
-        `Ответ: <code>${ctx.session.missionAnswer}</code>`
-      );
+      try {
+        // ИСПРАВЛЕНО: используем сохраненный ответ из сессии, а не текущий ввод!
+        db.setMission(location, ctx.session.missionText, ctx.session.missionAnswer, imageUrl);
+        
+        await ctx.replyWithHTML(
+          `✅ <b>Задание сохранено!</b>\n\n` +
+          `Локация: ${db.locationGraph[location].name}\n` +
+          `Текст: ${ctx.session.missionText.substring(0, 50)}...\n` +
+          `Ответ: <code>${ctx.session.missionAnswer}</code>\n` +
+          (imageUrl ? `Изображение: ${imageUrl}` : `Изображение: не задано`)
+        );
+        
+        delete ctx.session.settingType;
+        delete ctx.session.location;
+        delete ctx.session.step;
+        delete ctx.session.missionText;
+        delete ctx.session.missionAnswer;
+        await showAdminMenu(ctx);
+      } catch (error) {
+        console.error('❌ Ошибка сохранения задания:', error.message);
+        await ctx.replyWithHTML(
+          `❌ <b>Ошибка сохранения!</b>\n\n` +
+          `Не удалось сохранить задание: ${error.message}\n\n` +
+          `Пожалуйста, настройте задание заново.`
+        );
+        
+        // Очищаем сессию при ошибке
+        delete ctx.session.settingType;
+        delete ctx.session.location;
+        delete ctx.session.step;
+        delete ctx.session.missionText;
+        delete ctx.session.missionAnswer;
+        await showAdminMenu(ctx);
+      }
       
-      delete ctx.session.settingType;
-      delete ctx.session.location;
-      delete ctx.session.step;
-      delete ctx.session.missionText;
-      delete ctx.session.missionAnswer;
-      await showAdminMenu(ctx);
       return;
     }
     
@@ -1102,13 +1136,14 @@ server.listen(PORT, async () => {
   console.log(`   POST /${WEBHOOK_SECRET} → вебхуки Telegram`);
   console.log(`   POST /check-password  → API: проверка пароля`);
   console.log(`   POST /get-mission     → API: получение задания`);
-  console.log(`   POST /check-answer    → API: проверка ответа (с нормализацией!)`);
+  console.log(`   POST /check-answer    → API: проверка ответа (с защитой от пустых ответов!)`);
   console.log(`   POST /request-hint    → API: запрос подсказки`);
   console.log(``);
   console.log(`🔑 КРИТИЧЕСКИ ВАЖНО:`);
-  console.log(`   • Ответы нормализуются так же, как пароли (trim + toLowerCase + удаление спецсимволов)`);
-  console.log(`   • В базе данных хранится как оригинальный ответ, так и нормализованный`);
-  console.log(`   • Сравнение происходит по нормализованным версиям`);
+  console.log(`   • Ответы нормализуются: trim + toLowerCase + удаление спецсимволов`);
+  console.log(`   • В базе хранится оригинальный и нормализованный ответ`);
+  console.log(`   • При сохранении задания проверяется: ответ не может быть "-" или пустым`);
+  console.log(`   • При проверке ответа: если normalized_answer пустой — ошибка 500`);
   
   await setupWebhook();
   bot.webhookCallback(`/${WEBHOOK_SECRET}`, server);
