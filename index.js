@@ -1,9 +1,7 @@
-// index.js — бэкенд + сервер статики для фронтенда на Railway
+// index.js — упрощённая регистрация: 1 игрок = 1 команда
 import { Telegraf } from 'telegraf';
 import http from 'http';
 import { URL } from 'url';
-import fs from 'fs';
-import path from 'path';
 import { QuestDatabase } from './database.js';
 import 'dotenv/config';
 
@@ -11,10 +9,9 @@ import 'dotenv/config';
 const ADMIN_USER_IDS = process.env.ADMIN_USER_IDS;
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const FRONTEND_URL = process.env.FRONTEND_URL; // ← Railway URL
+const FRONTEND_URL = process.env.FRONTEND_URL;
 const PORT = process.env.PORT || 3000;
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
-const PUBLIC_DIR = path.join(process.cwd(), 'public');
 
 if (!TELEGRAM_BOT_TOKEN) throw new Error('TELEGRAM_BOT_TOKEN не установлен');
 if (ADMIN_USER_IDS[0] === 123456789) throw new Error('Замените 123456789 на ваш реальный Telegram ID');
@@ -23,24 +20,13 @@ if (ADMIN_USER_IDS[0] === 123456789) throw new Error('Замените 123456789
 const db = new QuestDatabase();
 const bot = new Telegraf(TELEGRAM_BOT_TOKEN);
 
-const LOCATIONS = {
-  gates: { name: 'Врата Кибердеревни', emoji: '🚪', order: 1 },
-  dome: { name: 'Купол Защиты', emoji: '🛡️', order: 2 },
-  mirror: { name: 'Зеркало Истины', emoji: '🪞', order: 3 },
-  stone: { name: 'Камень Пророчеств', emoji: '🔮', order: 4 },
-  hut: { name: 'Хижина Хранителя', emoji: '🏠', order: 5 },
-  lair: { name: 'Логово Вируса', emoji: '👾', order: 6 }
-};
-
-const ALL_LOCATIONS = Object.keys(LOCATIONS);
-
 const sessions = new Map();
 function getSession(userId) {
   if (!sessions.has(userId)) sessions.set(userId, {});
   return sessions.get(userId);
 }
 
-// ==================== HTTP СЕРВЕР С ВЕБХУКАМИ + СТАТИКОЙ ====================
+// ==================== HTTP СЕРВЕР С ВЕБХУКАМИ ====================
 const server = http.createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Telegram-Init-Data');
@@ -80,88 +66,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ============ ОБСЛУЖИВАНИЕ СТАТИЧЕСКИХ ФАЙЛОВ ФРОНТЕНДА ============
-  if (req.method === 'GET') {
-    // Защита от обхода каталогов
-    if (pathname.includes('..') || pathname.includes('%')) {
-      res.writeHead(403);
-      res.end('403 Forbidden');
-      return;
-    }
-
-    let filePath = path.join(PUBLIC_DIR, pathname);
-    
-    // Если это директория — отдаём index.html
-    try {
-      if (fs.existsSync(filePath) && fs.statSync(filePath).isDirectory()) {
-        filePath = path.join(filePath, 'index.html');
-      }
-    } catch (e) {
-      // Игнорируем ошибки
-    }
-
-    // Если файл не найден и нет расширения — пробуем добавить .html
-    if (!fs.existsSync(filePath) && !path.extname(filePath)) {
-      const htmlPath = filePath + '.html';
-      if (fs.existsSync(htmlPath)) {
-        filePath = htmlPath;
-      } else {
-        // Отдаём главную страницу для всех неизвестных маршрутов (SPA)
-        filePath = path.join(PUBLIC_DIR, 'index.html');
-      }
-    }
-
-    // Проверяем существование файла
-    if (!fs.existsSync(filePath)) {
-      res.writeHead(404);
-      res.end('404 Not Found');
-      return;
-    }
-
-    // Определяем тип содержимого
-    const extname = String(path.extname(filePath)).toLowerCase();
-    const mimeTypes = {
-      '.html': 'text/html',
-      '.js': 'text/javascript',
-      '.css': 'text/css',
-      '.json': 'application/json',
-      '.png': 'image/png',
-      '.jpg': 'image/jpg',
-      '.jpeg': 'image/jpeg',
-      '.gif': 'image/gif',
-      '.svg': 'image/svg+xml',
-      '.ico': 'image/x-icon',
-      '.woff': 'application/font-woff',
-      '.woff2': 'application/font-woff2',
-      '.ttf': 'application/font-ttf',
-      '.eot': 'application/vnd.ms-fontobject',
-      '.otf': 'application/font-otf',
-      '.wav': 'audio/wav',
-      '.mp3': 'audio/mpeg',
-      '.mp4': 'video/mp4',
-      '.wasm': 'application/wasm'
-    };
-
-    const contentType = mimeTypes[extname] || 'application/octet-stream';
-
-    // Отправляем файл
-    fs.readFile(filePath, (error, content) => {
-      if (error) {
-        res.writeHead(500);
-        res.end('500 Internal Server Error');
-      } else {
-        res.writeHead(200, { 'Content-Type': contentType });
-        res.end(content, 'utf-8');
-      }
-    });
-    return;
-  }
-
-  // ============ ОБРАБОТКА API ЗАПРОСОВ (как раньше) ============
-  // ... ВСЯ ЛОГИКА ОБРАБОТКИ /check-password, /get-mission и т.д. ...
-  // (полный код идентичен предыдущей версии — все этапы логирования, проверки паролей и т.д.)
-  
-  // Извлечение userId из initData
+  // ============ ИЗВЛЕЧЕНИЕ USER ID ИЗ INITDATA ============
   let userId = null;
   const initData = req.headers['x-telegram-init-data'] || '';
   
@@ -200,13 +105,13 @@ const server = http.createServer(async (req, res) => {
     });
     res.end(JSON.stringify({ 
       success: false, 
-      message: 'Сначала зарегистрируйтесь в боте! Напишите /start и введите код команды.',
+      message: 'Сначала зарегистрируйтесь в боте! Напишите /start',
       requiresRegistration: true
     }));
     return;
   }
 
-  const team = db.getTeamById(player.team_id);
+  const team = db.getTeamByPlayerId(userId);
   if (!team) {
     res.writeHead(500, {
       'Content-Type': 'application/json',
@@ -219,6 +124,14 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ============ ОПРЕДЕЛЕНИЕ ТЕКУЩЕЙ ЛОКАЦИИ ПО МАРШРУТУ ============
+  const currentLocation = db.getCurrentLocationForTeam(team.id);
+  const unlocked = JSON.parse(team.unlocked_locations || '["gates"]');
+  
+  console.log(`\n📍 Текущая локация команды ${team.id}: "${currentLocation}"`);
+  console.log(`   Разблокировано: ${unlocked.join(', ')}`);
+  console.log(`   Пройдено: ${JSON.parse(team.completed_locations || '[]').length}/6`);
+
   // Парсинг тела
   let body = '';
   req.on('data', chunk => body += chunk.toString());
@@ -226,62 +139,36 @@ const server = http.createServer(async (req, res) => {
     try {
       const data = body ? JSON.parse(body) : {};
 
-      // ПРОВЕРКА ПАРОЛЯ — ПОЛНОСТЬЮ ПЕРЕДЕЛАНАЯ ВЕРСИЯ С МАКСИМАЛЬНЫМ ЛОГИРОВАНИЕМ
+      // ============ ПРОВЕРКА ПАРОЛЯ ДЛЯ ТЕКУЩЕЙ ЛОКАЦИИ ============
       if (pathname === '/check-password' && req.method === 'POST') {
-        const { location, password } = data;
+        const { password } = data;
         
-        // ============ ЭТАП 1: ПОЛУЧЕНИЕ ДАННЫХ ИЗ ЗАПРОСА ============
-        console.log(`\n${'='.repeat(80)}`);
-        console.log(`🔐 [ПРОВЕРКА ПАРОЛЯ] Новый запрос`);
-        console.log(`   Время: ${new Date().toISOString()}`);
-        console.log(`   Локация: "${location}"`);
-        console.log(`   Пароль (как пришел): "${password}"`);
-        console.log(`   Длина пароля: ${password ? password.length : 0} символов`);
+        console.log(`\n🔐 Проверка пароля для текущей локации "${currentLocation}"`);
         
-        // Проверка наличия данных
-        if (!location || !password) {
-          console.error(`   ❌ Ошибка: не указаны локация или пароль`);
+        if (!password) {
           res.writeHead(400, {
             'Content-Type': 'application/json',
             'Access-Control-Allow-Origin': '*'
           });
-          res.end(JSON.stringify({ success: false, message: 'Не указаны локация или пароль' }));
+          res.end(JSON.stringify({ success: false, message: 'Не указан пароль' }));
           return;
         }
-
-        // ============ ЭТАП 2: ПРОВЕРКА ЛОКАЦИИ ============
-        const unlocked = JSON.parse(team.unlocked_locations || '["gates"]');
-        const completed = JSON.parse(team.completed_locations || '[]');
-        const nextLocationIndex = completed.length;
-        const expectedLocation = ALL_LOCATIONS[nextLocationIndex] || 'gates';
         
-        console.log(`\n📍 Проверка локации:`);
-        console.log(`   Текущая локация команды: ${expectedLocation}`);
-        console.log(`   Запрошенная локация: ${location}`);
-        console.log(`   Открытые локации: ${unlocked.join(', ')}`);
-        console.log(`   Завершенные локации: ${completed.length}`);
-        
-        if (location !== expectedLocation) {
-          console.warn(`   ⚠️ Локация не совпадает!`);
-          const expectedName = LOCATIONS[expectedLocation].name;
+        if (!unlocked.includes(currentLocation)) {
           res.writeHead(200, {
             'Content-Type': 'application/json',
             'Access-Control-Allow-Origin': '*'
           });
           res.end(JSON.stringify({ 
             success: false, 
-            message: `Эта локация ещё недоступна! Сначала завершите: ${expectedName}` 
+            message: 'Эта локация ещё недоступна. Завершите предыдущие задания!' 
           }));
           return;
         }
-        console.log(`   ✅ Локация проверена: "${location}" доступна для проверки`);
-
-        // ============ ЭТАП 3: ПОЛУЧЕНИЕ ПАРОЛЯ ИЗ БД ============
-        console.log(`\n🔑 Получение пароля из базы данных...`);
-        const passwordData = db.getPassword(location);
+        
+        const passwordData = db.getPassword(currentLocation);
         
         if (!passwordData) {
-          console.error(`   ❌ Пароль для локации "${location}" НЕ НАЙДЕН в базе данных!`);
           res.writeHead(200, {
             'Content-Type': 'application/json',
             'Access-Control-Allow-Origin': '*'
@@ -293,52 +180,14 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         
-        console.log(`   ✅ Пароль из БД получен:`);
-        console.log(`      Оригинал: "${passwordData.original}"`);
-        console.log(`      normalized: "${passwordData.normalized}"`);
-
-        // ============ ЭТАП 4: НОРМАЛИЗАЦИЯ ВВЕДЕННОГО ПАРОЛЯ ============
-        console.log(`\n✏️ Нормализация введенного пароля...`);
         const cleanInput = password.trim();
-        console.log(`   После trim: "${cleanInput}" (длина: ${cleanInput.length})`);
-        
         const normalizedInput = db.normalizePassword(cleanInput);
-        console.log(`   Нормализованный ввод: "${normalizedInput}"`);
-
-        // ============ ЭТАП 5: СРАВНЕНИЕ ============
-        console.log(`\n⚖️ Сравнение паролей:`);
-        console.log(`   Введенный (нормализ.): "${normalizedInput}"`);
-        console.log(`   Из БД (нормализ.):    "${passwordData.normalized}"`);
-        console.log(`   Длина введенного: ${normalizedInput.length}`);
-        console.log(`   Длина из БД: ${passwordData.normalized.length}`);
-        
-        // Побайтовое сравнение для отладки
-        if (normalizedInput.length === passwordData.normalized.length) {
-          let diffFound = false;
-          for (let i = 0; i < normalizedInput.length; i++) {
-            if (normalizedInput[i] !== passwordData.normalized[i]) {
-              console.log(`   ⚠️ Различие на позиции ${i}:`);
-              console.log(`      Введенный: "${normalizedInput[i]}" (код ${normalizedInput.charCodeAt(i)})`);
-              console.log(`      Из БД:     "${passwordData.normalized[i]}" (код ${passwordData.normalized.charCodeAt(i)})`);
-              diffFound = true;
-              break;
-            }
-          }
-          if (!diffFound) {
-            console.log(`   ✅ Все символы совпадают`);
-          }
-        } else {
-          console.log(`   ⚠️ Длины не совпадают!`);
-        }
-        
         const isCorrect = normalizedInput === passwordData.normalized;
-        console.log(`\n✅ Результат проверки: ${isCorrect ? 'ВЕРНО' : 'НЕВЕРНО'}`);
-
-        // ============ ЭТАП 6: ОТПРАВКА ОТВЕТА ============
+        
+        console.log(`   Результат: ${isCorrect ? '✅ ВЕРНО' : '❌ НЕВЕРНО'}`);
+        
         if (isCorrect) {
-          db.logEvent('location_unlocked', team.id, location, { userId });
-          console.log(`\n🎉 Пароль ВЕРНЫЙ! Локация разблокирована.`);
-          
+          db.logEvent('location_unlocked', team.id, currentLocation, { userId });
           res.writeHead(200, {
             'Content-Type': 'application/json',
             'Access-Control-Allow-Origin': '*'
@@ -346,67 +195,29 @@ const server = http.createServer(async (req, res) => {
           res.end(JSON.stringify({ 
             success: true, 
             message: 'Пароль верный! Задание открыто.',
-            locationName: LOCATIONS[location].name,
-            teamCode: team.code,
-            teamName: team.name
+            location: currentLocation,
+            locationName: db.locationGraph[currentLocation].name,
+            nextLocation: db.getNextLocationForTeam(team.id)
           }));
         } else {
-          db.logEvent('wrong_password', team.id, location, { 
-            userId, 
-            input: cleanInput.substring(0, 20),
-            normalized: normalizedInput
-          });
-          
-          console.log(`\n❌ Пароль НЕВЕРНЫЙ!`);
-          console.log(`   Подробности для отладки:`);
-          console.log(`      Введено (оригинал): "${password}"`);
-          console.log(`      Введено (после trim): "${cleanInput}"`);
-          console.log(`      Введено (нормализ.): "${normalizedInput}"`);
-          console.log(`      Ожидалось (нормализ.): "${passwordData.normalized}"`);
-          console.log(`      Разница в длине: ${Math.abs(normalizedInput.length - passwordData.normalized.length)} символов`);
-          
+          db.logEvent('wrong_password', team.id, currentLocation, { userId, input: cleanInput.substring(0, 20) });
           res.writeHead(200, {
             'Content-Type': 'application/json',
             'Access-Control-Allow-Origin': '*'
           });
           res.end(JSON.stringify({ 
             success: false, 
-            message: 'Неверный пароль! Проверьте написание и попробуйте снова.',
-            debug: {
-              inputRaw: password,
-              inputTrimmed: cleanInput,
-              inputNormalized: normalizedInput,
-              expectedNormalized: passwordData.normalized,
-              inputLength: password.length,
-              trimmedLength: cleanInput.length,
-              normalizedLength: normalizedInput.length,
-              expectedLength: passwordData.normalized.length
-            }
+            message: 'Неверный пароль! Проверьте написание и попробуйте снова.'
           }));
         }
-        
-        console.log(`${'='.repeat(80)}\n`);
         return;
       }
 
-      // ... остальные обработчики (получение задания, проверка ответа, подсказки) без изменений
-      // (полный код идентичен предыдущей версии — все этапы логирования)
-      
-      // Получение задания
+      // ============ ПОЛУЧЕНИЕ ЗАДАНИЯ ДЛЯ ТЕКУЩЕЙ ЛОКАЦИИ ============
       if (pathname === '/get-mission' && req.method === 'POST') {
-        const { location } = data;
+        console.log(`\n📜 Получение задания для локации "${currentLocation}"`);
         
-        if (!location) {
-          res.writeHead(400, {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*'
-          });
-          res.end(JSON.stringify({ error: 'Не указана локация' }));
-          return;
-        }
-
-        const unlocked = JSON.parse(team.unlocked_locations || '["gates"]');
-        if (!unlocked.includes(location)) {
+        if (!unlocked.includes(currentLocation)) {
           res.writeHead(403, {
             'Content-Type': 'application/json',
             'Access-Control-Allow-Origin': '*'
@@ -417,8 +228,8 @@ const server = http.createServer(async (req, res) => {
           }));
           return;
         }
-
-        const mission = db.getMission(location);
+        
+        const mission = db.getMission(currentLocation);
         if (!mission) {
           res.writeHead(404, {
             'Content-Type': 'application/json',
@@ -430,8 +241,6 @@ const server = http.createServer(async (req, res) => {
           }));
           return;
         }
-
-        const members = db.getTeamMembers(team.id);
         
         res.writeHead(200, {
           'Content-Type': 'application/json',
@@ -439,37 +248,42 @@ const server = http.createServer(async (req, res) => {
         });
         res.end(JSON.stringify({ 
           success: true,
+          location: currentLocation,
+          locationName: db.locationGraph[currentLocation].name,
+          locationEmoji: db.locationGraph[currentLocation].emoji,
           mission: {
             text: mission.text,
             imageUrl: mission.image_url
           },
-          locationName: LOCATIONS[location].name,
           team: {
-            code: team.code,
+            id: team.id,
             name: team.name,
-            members: members.map(m => ({ name: m.first_name, id: m.id })),
             completedLocations: JSON.parse(team.completed_locations || '[]').length,
+            totalLocations: 6,
             hintsUsed: team.hints_used,
-            hintsLeft: 3 - team.hints_used
+            hintsLeft: 3 - team.hints_used,
+            route: JSON.parse(team.route)
           }
         }));
         return;
       }
 
-      // Проверка ответа
+      // ============ ПРОВЕРКА ОТВЕТА ДЛЯ ТЕКУЩЕЙ ЛОКАЦИИ ============
       if (pathname === '/check-answer' && req.method === 'POST') {
-        const { location, answer } = data;
+        const { answer } = data;
         
-        if (!location || !answer) {
+        console.log(`\n✅ Проверка ответа для локации "${currentLocation}"`);
+        
+        if (!answer) {
           res.writeHead(400, {
             'Content-Type': 'application/json',
             'Access-Control-Allow-Origin': '*'
           });
-          res.end(JSON.stringify({ success: false, message: 'Не указаны локация или ответ' }));
+          res.end(JSON.stringify({ success: false, message: 'Не указан ответ' }));
           return;
         }
-
-        const mission = db.getMission(location);
+        
+        const mission = db.getMission(currentLocation);
         if (!mission) {
           res.writeHead(404, {
             'Content-Type': 'application/json',
@@ -478,19 +292,19 @@ const server = http.createServer(async (req, res) => {
           res.end(JSON.stringify({ success: false, message: 'Задание не найдено' }));
           return;
         }
-
+        
         const cleanAnswer = answer.trim().toLowerCase();
         const correctAnswer = mission.answer.trim().toLowerCase();
         const isCorrect = cleanAnswer === correctAnswer;
         
         if (isCorrect) {
-          db.completeLocationForTeam(team.id, location);
-          db.logEvent('location_completed', team.id, location, { userId });
+          db.completeLocationForTeam(team.id, currentLocation);
+          db.logEvent('location_completed', team.id, currentLocation, { userId });
           
           const updatedTeam = db.getTeamById(team.id);
           const completed = JSON.parse(updatedTeam.completed_locations || '[]');
           const isQuestComplete = completed.length >= 6;
-          const nextLocation = completed.length < 6 ? ALL_LOCATIONS[completed.length] : null;
+          const nextLocation = db.getNextLocationForTeam(team.id);
           
           res.writeHead(200, {
             'Content-Type': 'application/json',
@@ -498,9 +312,9 @@ const server = http.createServer(async (req, res) => {
           });
           res.end(JSON.stringify({ 
             success: true, 
-            message: 'Верно! Локация пройдена командой!',
+            message: 'Верно! Локация пройдена!',
             nextLocation: nextLocation,
-            nextLocationName: nextLocation ? LOCATIONS[nextLocation].name : null,
+            nextLocationName: nextLocation ? db.locationGraph[nextLocation].name : null,
             questComplete: isQuestComplete,
             teamProgress: {
               completed: completed.length,
@@ -508,7 +322,7 @@ const server = http.createServer(async (req, res) => {
             }
           }));
         } else {
-          db.logEvent('wrong_answer', team.id, location, { userId, input: answer.trim().substring(0, 20) });
+          db.logEvent('wrong_answer', team.id, currentLocation, { userId, input: answer.trim().substring(0, 20) });
           res.writeHead(200, {
             'Content-Type': 'application/json',
             'Access-Control-Allow-Origin': '*'
@@ -521,19 +335,12 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      // Запрос подсказки
+      // ============ ЗАПРОС ПОДСКАЗКИ ДЛЯ ТЕКУЩЕЙ ЛОКАЦИИ ============
       if (pathname === '/request-hint' && req.method === 'POST') {
-        const { location, hintLevel = 1 } = data;
+        const { hintLevel = 1 } = data;
         
-        if (!location) {
-          res.writeHead(400, {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*'
-          });
-          res.end(JSON.stringify({ error: 'Не указана локация' }));
-          return;
-        }
-
+        console.log(`\n💡 Запрос подсказки (уровень ${hintLevel}) для локации "${currentLocation}"`);
+        
         if (team.hints_used >= 3) {
           res.writeHead(200, {
             'Content-Type': 'application/json',
@@ -546,8 +353,8 @@ const server = http.createServer(async (req, res) => {
           }));
           return;
         }
-
-        const hint = db.getHint(location, hintLevel);
+        
+        const hint = db.getHint(currentLocation, hintLevel);
         if (!hint) {
           res.writeHead(404, {
             'Content-Type': 'application/json',
@@ -560,10 +367,16 @@ const server = http.createServer(async (req, res) => {
           }));
           return;
         }
-
-        db.useHintForTeam(team.id);
-        db.logEvent('hint_used', team.id, location, { userId, level: hintLevel });
-
+        
+        // Используем подсказку на уровне команды
+        const teamRow = db.getTeamById(team.id);
+        if (teamRow.hints_used < 3) {
+          db.db.prepare('UPDATE teams SET hints_used = hints_used + 1, last_activity = CURRENT_TIMESTAMP WHERE id = ?')
+            .run(team.id);
+        }
+        
+        db.logEvent('hint_used', team.id, currentLocation, { userId, level: hintLevel });
+        
         const updatedTeam = db.getTeamById(team.id);
         
         res.writeHead(200, {
@@ -575,7 +388,7 @@ const server = http.createServer(async (req, res) => {
           text: hint.text,
           hintsUsed: updatedTeam.hints_used,
           hintsLeft: 3 - updatedTeam.hints_used,
-          teamCode: team.code
+          location: currentLocation
         }));
         return;
       }
@@ -596,84 +409,66 @@ const server = http.createServer(async (req, res) => {
   });
 });
 
-// ... ВСЯ ЛОГИКА БОТА БЕЗ ИЗМЕНЕНИЙ (полный код идентичен предыдущей версии) ...
-// (все обработчики команд, админ-панель, кнопки с правильным синтаксисом callback_data)
-
+// ==================== TELEGRAM БОТ — УПРОЩЁННАЯ РЕГИСТРАЦИЯ ====================
 bot.use((ctx, next) => {
   ctx.isAdmin = ADMIN_USER_IDS.includes(ctx.from?.id);
   ctx.session = getSession(ctx.from?.id);
   return next();
 });
 
+// Команда /start — МГНОВЕННАЯ РЕГИСТРАЦИЯ
 bot.start(async (ctx) => {
   const player = db.getPlayer(ctx.from.id);
   const isRegistered = player && player.is_registered;
   
-  const adminButton = ctx.isAdmin ? [{ text: '🔧 Админ-панель', callback_ 'admin_panel' }] : [];
-  
+  // Если уже зарегистрирован — показываем меню квеста
   if (isRegistered) {
-    const team = db.getTeamById(player.team_id);
+    const team = db.getTeamByPlayerId(ctx.from.id);
     await ctx.replyWithHTML(
       `👋 <b>С возвращением, ${player.first_name}!</b>\n\n` +
-      `🛡️ Вы в команде: <b>${team.name}</b> (${team.code})\n` +
-      `👥 Состав команды: ${db.getTeamMembers(team.id).length} игроков\n\n` +
+      `🛡️ Ваша команда: <b>${team.name}</b>\n` +
+      `🗺️ Уникальный маршрут: ${JSON.parse(team.route).map(loc => db.locationGraph[loc].emoji).join(' → ')}\n\n` +
       `<b>Выберите действие:</b>`,
       {
         reply_markup: {
           inline_keyboard: [
-            // КНОПКА ВЕДЁТ НА КОРНЕВОЙ URL RAILWAY С ПАРАМЕТРОМ TEAM
-            [{ text: '🚀 Начать квест', web_app: { url: `${FRONTEND_URL}?team=${teamCode}` } }],
-            [{ text: '📊 Статистика команды', callback_data: 'team_stats' }],
-            [{ text: '👥 Состав команды', callback_data: 'team_members' }],
-            ...adminButton
-          ]
+            [{ text: '🚀 Начать квест', web_app: { url: `${FRONTEND_URL}` } }],
+            [{ text: '📊 Статистика', callback_data:'team_stats' }],
+            [{ text: '🔧 Админ-панель', callback_data:'admin_panel' }]
+          ].filter(btn => !ctx.isAdmin || btn[0].text !== '🔧 Админ-панель' || ctx.isAdmin)
         }
       }
     );
     return;
   }
   
-  if (ctx.isAdmin) {
-    await ctx.replyWithHTML(
-      `👋 <b>Добро пожаловать, Администратор!</b>\n\n` +
-      `🛡️ Вы можете:\n` +
-      `• Настроить квест через админ-панель\n` +
-      `• Создать команду и пройти квест как игрок`,
-      {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '🔧 Админ-панель', callback_ 'admin_panel' }],
-            [{ text: '🆕 Создать команду', callback_ 'create_new_team' }],
-            [{ text: '❓ Как создать команду?', callback_ 'how_to_create' }]
-          ]
-        }
-      }
-    );
-    return;
-  }
+  // Новый игрок — МГНОВЕННАЯ РЕГИСТРАЦИЯ без кодов команды!
+  const { player: newPlayer, team } = db.createTeamForPlayer(
+    ctx.from.id, 
+    ctx.from.first_name + (ctx.from.last_name ? ` ${ctx.from.last_name}` : '')
+  );
   
-  ctx.session.registerStep = 'team_code';
   await ctx.replyWithHTML(
-    `👋 <b>Добро пожаловать в "Защиту Кибердеревни"!</b>\n\n` +
-    `👾 Это <b>командный квест</b> для групп по 3 человека.\n\n` +
-    `<b>Как зарегистрироваться:</b>\n` +
-    `1️⃣ Получите код команды у капитана\n` +
-    `2️⃣ Введите код ниже (6 символов)\n` +
-    `3️⃣ Укажите ваше имя в команде\n\n` +
-    `<i>Пример кода: ABC123</i>`,
+    `✅ <b>Регистрация завершена!</b>\n\n` +
+    `👤 <b>Игрок:</b> ${newPlayer.first_name}\n` +
+    `🛡️ <b>Команда:</b> ${team.name}\n` +
+    `🗺️ <b>Ваш уникальный маршрут:</b>\n` +
+    `${JSON.parse(team.route).map((loc, i) => `${i + 1}. ${db.locationGraph[loc].emoji} ${db.locationGraph[loc].name}`).join('\n')}\n\n` +
+    `✨ <b>Особенность вашего маршрута:</b>\n` +
+    `Команды никогда не пересекутся на локациях!\n\n` +
+    `Готовы спасти Кибердеревню?`,
     {
       reply_markup: {
         inline_keyboard: [
-          [{ text: '🆕 Создать новую команду', callback_data: 'create_new_team' }],
-          [{ text: '❓ Как создать команду?', callback_ 'how_to_create' }]
+          [{ text: '🚀 Начать квест', web_app: { url: `${FRONTEND_URL}` } }],
+          [{ text: '📊 Статистика', callback_data:'team_stats' }]
         ]
       }
     }
   );
 });
 
-// ... остальные обработчики бота (полный код без изменений, все кнопки с callback_data) ...
-
+// Админ-панель доступна только администраторам
 bot.action('admin_panel', async (ctx) => {
   if (!ctx.isAdmin) {
     await ctx.answerCbQuery('Доступ запрещён', { show_alert: true });
@@ -691,38 +486,476 @@ bot.command('admin', async (ctx) => {
   await showAdminMenu(ctx);
 });
 
-bot.action('create_new_team', async (ctx) => {
-  const teamCode = db.generateTeamCode();
-  const team = db.createTeam(teamCode, `Команда ${teamCode}`);
-  const { player } = db.registerPlayer(ctx.from.id, teamCode, ctx.from.first_name);
+// Статистика команды
+bot.action('team_stats', async (ctx) => {
+  const player = db.getPlayer(ctx.from.id);
+  if (!player || !player.is_registered) {
+    await ctx.answerCbQuery('Сначала зарегистрируйтесь!', { show_alert: true });
+    return;
+  }
+  
+  const team = db.getTeamByPlayerId(ctx.from.id);
+  const completed = JSON.parse(team.completed_locations || '[]').length;
+  const unlocked = JSON.parse(team.unlocked_locations || '["gates"]').length;
+  const hintsLeft = 3 - team.hints_used;
+  const route = JSON.parse(team.route);
+  
+  let routeText = route.map((loc, i) => {
+    const isCompleted = i < completed;
+    const isCurrent = i === completed;
+    const marker = isCompleted ? '✅' : (isCurrent ? '➡️' : '🔲');
+    return `${marker} ${i + 1}. ${db.locationGraph[loc].emoji} ${db.locationGraph[loc].name}`;
+  }).join('\n');
   
   await ctx.answerCbQuery();
   await ctx.replyWithHTML(
-    `✅ <b>Команда создана!</b>\n\n` +
-    `🔑 <b>Код команды:</b> <code>${teamCode}</code>\n` +
-    `📝 <b>Название:</b> ${team.name}\n\n` +
-    `👉 <b>Отправьте этот код своим товарищам!</b>\n` +
-    `Они должны ввести его при регистрации.\n\n` +
-    `<i>Максимум 3 игрока в команде.</i>`,
-    {
-      reply_markup: {
-        inline_keyboard: [
-          // КНОПКА ВЕДЁТ НА КОРНЕВОЙ URL RAILWAY С ПАРАМЕТРОМ TEAM
-          [{ text: '🚀 Начать квест', web_app: { url: `${FRONTEND_URL}?team=${teamCode}` } }],
-          [{ text: '📊 Статистика команды', callback_ 'team_stats' }],
-          [{ text: '🔧 Админ-панель', callback_ 'admin_panel' }]
-        ]
-      }
-    }
+    `📊 <b>Статистика вашей команды</b>\n\n` +
+    `🛡️ Название: ${team.name}\n` +
+    `✅ Пройдено локаций: ${completed}/6\n` +
+    `🔓 Открыто локаций: ${unlocked}/6\n` +
+    `💡 Осталось подсказок: ${hintsLeft}/3\n\n` +
+    `<b>Ваш маршрут:</b>\n${routeText}`
   );
-  
-  if (ctx.session) {
-    delete ctx.session.registerStep;
-    delete ctx.session.teamCode;
-  }
 });
 
-// ... остальные обработчики (полный код без изменений) ...
+bot.command('stats', async (ctx) => {
+  const player = await db.getPlayer(ctx.from.id);
+  if (!player || !player.is_registered) {
+    await ctx.reply('Сначала зарегистрируйтесь командой /start');
+    return;
+  }
+  
+  const team = db.getTeamByPlayerId(ctx.from.id);
+  const completed = JSON.parse(team.completed_locations || '[]').length;
+  const unlocked = JSON.parse(team.unlocked_locations || '["gates"]').length;
+  const hintsLeft = 3 - team.hints_used;
+  
+  await ctx.replyWithHTML(
+    `📊 <b>Ваша статистика</b>\n\n` +
+    `👤 Игрок: ${player.first_name}\n` +
+    `🛡️ Команда: ${team.name}\n` +
+    `✅ Пройдено локаций: ${completed}/6\n` +
+    `🔓 Открыто локаций: ${unlocked}/6\n` +
+    `💡 Осталось подсказок: ${hintsLeft}/3`
+  );
+});
+
+bot.command('hint', async (ctx) => {
+  const player = await db.getPlayer(ctx.from.id);
+  if (!player || !player.is_registered) {
+    await ctx.reply('Сначала зарегистрируйтесь командой /start');
+    return;
+  }
+  
+  const team = db.getTeamByPlayerId(ctx.from.id);
+  if (team.hints_used >= 3) {
+    await ctx.reply('🚫 У вашей команды закончились подсказки!');
+    return;
+  }
+  
+  const completed = JSON.parse(team.completed_locations || '[]');
+  const nextLocationIndex = completed.length;
+  const currentLocation = db.locationGraph[nextLocationIndex] || 'gates';
+  
+  const hintLevel = team.hints_used + 1;
+  const hint = await db.getHint(currentLocation, hintLevel);
+  
+  if (!hint) {
+    await ctx.reply('🤔 Подсказка для текущей локации не настроена.');
+    return;
+  }
+  
+  // Используем подсказку
+  db.db.prepare('UPDATE teams SET hints_used = hints_used + 1, last_activity = CURRENT_TIMESTAMP WHERE id = ?')
+    .run(team.id);
+  
+  await db.logEvent('hint_used', team.id, currentLocation, { userId: ctx.from.id, level: hintLevel });
+  
+  const hintsLeft = 3 - (team.hints_used + 1);
+  
+  await ctx.replyWithHTML(
+    `💡 <b>Подсказка для "${db.locationGraph[currentLocation].name}"</b>\n\n` +
+    `${hint.text}\n\n` +
+    `Осталось подсказок: ${hintsLeft}/3`
+  );
+});
+
+// ... остальные обработчики админ-панели без изменений (полный код идентичен предыдущей версии) ...
+
+async function showAdminMenu(ctx) {
+  const pwdCount = db.getAllPasswords().length;
+  const missionCount = db.getAllMissions().length;
+  const hintCount = db.db.prepare('SELECT COUNT(*) as cnt FROM hints').get().cnt;
+  
+  const message = `🔧 <b>Админ-панель квеста</b>\n\n` +
+    `✅ Паролей задано: ${pwdCount}/6\n` +
+    `✅ Заданий настроено: ${missionCount}/6\n` +
+    `✅ Подсказок создано: ${hintCount}\n\n` +
+    `<b>Выберите раздел для управления:</b>`;
+  
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: '🔑 Пароли доступа', callback_data:'admin_passwords' }],
+      [{ text: '📝 Задания локаций', callback_data:'admin_missions' }],
+      [{ text: '💡 Подсказки', callback_data:'admin_hints' }],
+      [{ text: '📊 Статистика', callback_data:'admin_stats' }]
+    ]
+  };
+  
+  if (ctx.callbackQuery) {
+    await ctx.editMessageText(message, {
+      parse_mode: 'HTML',
+      reply_markup: keyboard
+    });
+    await ctx.answerCbQuery();
+  } else {
+    await ctx.reply(message, {
+      parse_mode: 'HTML',
+      reply_markup: keyboard
+    });
+  }
+}
+
+// Обработчики админ-панели (без изменений)
+bot.action('admin_passwords', async (ctx) => {
+  if (!ctx.isAdmin) return;
+  
+  const passwords = db.getAllPasswords();
+  
+  let msg = `🔑 <b>Пароли доступа к локациям</b>\n\n` +
+    `<i>Эти пароли игроки вводят для открытия задания на локации</i>\n\n`;
+  
+  Object.entries(db.locationGraph).forEach(([id, loc]) => {
+    const pwd = passwords.find(p => p.location === id);
+    msg += `${pwd ? '✅' : '❌'} ${loc.emoji} ${loc.name}: ` +
+           `<code>${pwd?.password || 'не задан'}</code>\n`;
+  });
+  
+  msg += `\n<b>Выберите локацию для настройки пароля:</b>`;
+  
+  const keyboard = {
+    inline_keyboard: [
+      [
+        { text: '🚪 Врата', callback_data:'set_pwd_gates' },
+        { text: '🛡️ Купол', callback_data:'set_pwd_dome' }
+      ],
+      [
+        { text: '🪞 Зеркало', callback_data:'set_pwd_mirror' },
+        { text: '🔮 Камень', callback_data:'set_pwd_stone' }
+      ],
+      [
+        { text: '🏠 Хижина', callback_data:'set_pwd_hut' },
+        { text: '👾 Логово', callback_data:'set_pwd_lair' }
+      ],
+      [{ text: '🔙 Назад', callback_data:'admin_main' }]
+    ]
+  };
+  
+  await ctx.editMessageText(msg, {
+    parse_mode: 'HTML',
+    reply_markup: keyboard
+  });
+  await ctx.answerCbQuery();
+});
+
+bot.action(/set_pwd_(.+)/, async (ctx) => {
+  if (!ctx.isAdmin) return;
+  
+  const locationId = ctx.match[1];
+  if (!db.locationGraph[locationId]) {
+    await ctx.answerCbQuery('Локация не найдена', { show_alert: true });
+    return;
+  }
+  
+  ctx.session.settingType = 'password';
+  ctx.session.location = locationId;
+  
+  await ctx.answerCbQuery();
+  await ctx.replyWithHTML(
+    `🔑 <b>Установка пароля для "${db.locationGraph[locationId].name}"</b>\n\n` +
+    `Отправьте пароль доступа к локации:\n` +
+    `<i>• Регистр НЕ важен\n` +
+    `• Без пробелов в начале/конце\n` +
+    `• Пример: <code>gate2024</code></i>`
+  );
+});
+
+bot.action('admin_missions', async (ctx) => {
+  if (!ctx.isAdmin) return;
+  
+  const missions = db.getAllMissions();
+  
+  let msg = `📝 <b>Задания локаций</b>\n\n` +
+    `<i>Эти задания игроки видят после ввода пароля доступа</i>\n\n`;
+  
+  Object.entries(db.locationGraph).forEach(([id, loc]) => {
+    const mission = missions.find(m => m.location === id);
+    msg += `${mission ? '✅' : '❌'} ${loc.emoji} ${loc.name}\n`;
+  });
+  
+  msg += `\n<b>Выберите локацию для настройки задания:</b>`;
+  
+  const keyboard = {
+    inline_keyboard: [
+      [
+        { text: '🚪 Врата', callback_data:'set_mission_gates' },
+        { text: '🛡️ Купол', callback_data:'set_mission_dome' }
+      ],
+      [
+        { text: '🪞 Зеркало', callback_data:'set_mission_mirror' },
+        { text: '🔮 Камень', callback_data:'set_mission_stone' }
+      ],
+      [
+        { text: '🏠 Хижина', callback_data:'set_mission_hut' },
+        { text: '👾 Логово', callback_data:'set_mission_lair' }
+      ],
+      [{ text: '🔙 Назад', callback_data:'admin_main' }]
+    ]
+  };
+  
+  await ctx.editMessageText(msg, {
+    parse_mode: 'HTML',
+    reply_markup: keyboard
+  });
+  await ctx.answerCbQuery();
+});
+
+bot.action(/set_mission_(.+)/, async (ctx) => {
+  if (!ctx.isAdmin) return;
+  
+  const locationId = ctx.match[1];
+  if (!db.locationGraph[locationId]) {
+    await ctx.answerCbQuery('Локация не найдена', { show_alert: true });
+    return;
+  }
+  
+  ctx.session.settingType = 'mission';
+  ctx.session.location = locationId;
+  ctx.session.step = 'text';
+  
+  await ctx.answerCbQuery();
+  await ctx.replyWithHTML(
+    `📝 <b>Настройка задания для "${db.locationGraph[locationId].name}"</b>\n\n` +
+    `Шаг 1/3: Отправьте <b>текст задания</b>:\n` +
+    `<i>Пример: "Найди амулет под древним дубом"</i>`
+  );
+});
+
+bot.action('admin_hints', async (ctx) => {
+  if (!ctx.isAdmin) return;
+  
+  const hintCounts = {};
+  Object.keys(db.locationGraph).forEach(loc => {
+    hintCounts[loc] = db.getHintsForLocation(loc).length;
+  });
+  
+  let msg = `💡 <b>Подсказки по локациям</b>\n\n` +
+    `<i>Игроки могут запросить до 3 подсказок за квест</i>\n\n`;
+  
+  Object.entries(db.locationGraph).forEach(([id, loc]) => {
+    msg += `${loc.emoji} ${loc.name}: ${hintCounts[id]} подсказок\n`;
+  });
+  
+  msg += `\n<b>Выберите действие:</b>`;
+  
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: '➕ Добавить подсказку', callback_data:'add_hint' }],
+      [{ text: '🔙 Назад', callback_data:'admin_main' }]
+    ]
+  };
+  
+  await ctx.editMessageText(msg, {
+    parse_mode: 'HTML',
+    reply_markup: keyboard
+  });
+  await ctx.answerCbQuery();
+});
+
+bot.action('add_hint', async (ctx) => {
+  if (!ctx.isAdmin) return;
+  
+  const keyboard = {
+    inline_keyboard: [
+      [
+        { text: '🚪 Врата', callback_data:'hint_loc_gates' },
+        { text: '🛡️ Купол', callback_data:'hint_loc_dome' }
+      ],
+      [
+        { text: '🪞 Зеркало', callback_data:'hint_loc_mirror' },
+        { text: '🔮 Камень', callback_data:'hint_loc_stone' }
+      ],
+      [
+        { text: '🏠 Хижина', callback_data:'hint_loc_hut' },
+        { text: '👾 Логово', callback_data:'hint_loc_lair' }
+      ],
+      [{ text: '🔙 Отмена', callback_data:'admin_hints' }]
+    ]
+  };
+  
+  await ctx.replyWithHTML(
+    `➕ <b>Добавление подсказки</b>\n\nВыберите локацию:`,
+    { reply_markup: keyboard }
+  );
+  await ctx.answerCbQuery();
+});
+
+bot.action(/hint_loc_(.+)/, async (ctx) => {
+  if (!ctx.isAdmin) return;
+  
+  const locationId = ctx.match[1];
+  if (!db.locationGraph[locationId]) {
+    await ctx.answerCbQuery('Локация не найдена', { show_alert: true });
+    return;
+  }
+  
+  ctx.session.settingType = 'hint';
+  ctx.session.location = locationId;
+  ctx.session.step = 'level';
+  
+  await ctx.answerCbQuery();
+  await ctx.replyWithHTML(
+    `🔢 <b>Уровень подсказки для "${db.locationGraph[locationId].name}"</b>\n\n` +
+    `Отправьте уровень (1-3):\n` +
+    `1️⃣ — Общая подсказка\n` +
+    `2️⃣ — Конкретная подсказка\n` +
+    `3️⃣ — Детальная подсказка`
+  );
+});
+
+bot.action('admin_stats', async (ctx) => {
+  if (!ctx.isAdmin) return;
+  
+  const { totalTeams, completedTeams, totalPlayers } = db.getStats();
+  
+  const msg = `📊 <b>Статистика квеста</b>\n\n` +
+    `👥 Всего команд: ${totalTeams}\n` +
+    `🏆 Завершили квест: ${completedTeams}\n` +
+    `👤 Всего игроков: ${totalPlayers}\n\n` +
+    `<i>Статистика обновляется в реальном времени</i>`;
+  
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: '🔄 Обновить', callback_data:'admin_stats' }],
+      [{ text: '🔙 Назад', callback_data:'admin_main' }]
+    ]
+  };
+  
+  await ctx.editMessageText(msg, {
+    parse_mode: 'HTML',
+    reply_markup: keyboard
+  });
+  await ctx.answerCbQuery();
+});
+
+bot.action('admin_main', async (ctx) => {
+  if (!ctx.isAdmin) return;
+  await ctx.answerCbQuery();
+  await showAdminMenu(ctx);
+});
+
+bot.on('text', async (ctx) => {
+  if (ctx.isAdmin && ctx.session?.settingType) {
+    const { settingType, location, step } = ctx.session;
+    const text = ctx.message.text.trim();
+    
+    if (settingType === 'password') {
+      if (text.length < 4) {
+        await ctx.reply('⚠️ Пароль должен быть не менее 4 символов. Попробуйте ещё раз:');
+        return;
+      }
+      
+      db.setPassword(location, text);
+      await ctx.replyWithHTML(
+        `✅ <b>Пароль установлен!</b>\n\n` +
+        `Локация: ${db.locationGraph[location].name}\n` +
+        `Пароль: <code>${text}</code>\n\n` +
+        `<i>Игроки должны ввести этот пароль для доступа к заданию</i>`
+      );
+      
+      delete ctx.session.settingType;
+      delete ctx.session.location;
+      await showAdminMenu(ctx);
+      return;
+    }
+    
+    if (settingType === 'mission' && step === 'text') {
+      ctx.session.missionText = text;
+      ctx.session.step = 'answer';
+      await ctx.replyWithHTML(
+        `📝 <b>Настройка задания для "${db.locationGraph[location].name}"</b>\n\n` +
+        `Шаг 2/3: Отправьте <b>правильный ответ</b>:\n` +
+        `<i>Пример: "дуб2024"</i>`
+      );
+      return;
+    }
+    
+    if (settingType === 'mission' && step === 'answer') {
+      ctx.session.missionAnswer = text;
+      ctx.session.step = 'image';
+      await ctx.replyWithHTML(
+        `📝 <b>Настройка задания для "${db.locationGraph[location].name}"</b>\n\n` +
+        `Шаг 3/3: Отправьте <b>URL изображения</b> или "-" для пропуска:\n` +
+        `<i>Рекомендуется: 800x600px, JPG/PNG</i>`
+      );
+      return;
+    }
+    
+    if (settingType === 'mission' && step === 'image') {
+      const imageUrl = text !== '-' ? text : null;
+      db.setMission(location, ctx.session.missionText, text, imageUrl);
+      
+      await ctx.replyWithHTML(
+        `✅ <b>Задание сохранено!</b>\n\n` +
+        `Локация: ${db.locationGraph[location].name}\n` +
+        `Текст: ${ctx.session.missionText.substring(0, 50)}...\n` +
+        `Ответ: <code>${ctx.session.missionAnswer}</code>`
+      );
+      
+      delete ctx.session.settingType;
+      delete ctx.session.location;
+      delete ctx.session.step;
+      delete ctx.session.missionText;
+      delete ctx.session.missionAnswer;
+      await showAdminMenu(ctx);
+      return;
+    }
+    
+    if (settingType === 'hint' && step === 'level') {
+      const level = parseInt(text);
+      if (isNaN(level) || level < 1 || level > 3) {
+        await ctx.reply('❌ Уровень должен быть от 1 до 3. Попробуйте ещё раз:');
+        return;
+      }
+      
+      ctx.session.hintLevel = level;
+      ctx.session.step = 'text';
+      await ctx.replyWithHTML(
+        `✏️ <b>Подсказка для "${db.locationGraph[location].name}" (уровень ${level})</b>\n\n` +
+        `Отправьте текст подсказки:`
+      );
+      return;
+    }
+    
+    if (settingType === 'hint' && step === 'text') {
+      db.createHint(location, ctx.session.hintLevel, text);
+      
+      await ctx.replyWithHTML(
+        `✅ <b>Подсказка создана!</b>\n\n` +
+        `Локация: ${db.locationGraph[location].name}\n` +
+        `Уровень: ${ctx.session.hintLevel}\n` +
+        `Текст: ${text}`
+      );
+      
+      delete ctx.session.settingType;
+      delete ctx.session.location;
+      delete ctx.session.step;
+      delete ctx.session.hintLevel;
+      await showAdminMenu(ctx);
+      return;
+    }
+  }
+});
 
 bot.catch((err, ctx) => {
   console.error(`⚠️ Ошибка обработки сообщения от ${ctx.from?.id}:`, err.message);
@@ -750,23 +983,20 @@ async function setupWebhook() {
 
 server.listen(PORT, async () => {
   console.log(`✅ HTTP сервер запущен на порту ${PORT}`);
-  console.log(`📁 Статические файлы обслуживаются из: ${PUBLIC_DIR}`);
-  console.log(`   GET  /                 - главная страница фронтенда`);
-  console.log(`   GET  /*.html, *.js... - статические файлы`);
-  console.log(`   POST /${WEBHOOK_SECRET} - обработка вебхуков Telegram`);
-  console.log(`   POST /check-password    - проверка пароля доступа`);
-  console.log(`   POST /get-mission       - получение задания`);
-  console.log(`   POST /check-answer      - проверка ответа`);
-  console.log(`   POST /request-hint      - запрос подсказки`);
-  console.log(`   GET  /health            - health check`);
+  console.log(`   POST /${WEBHOOK_SECRET}   - обработка вебхуков Telegram`);
+  console.log(`   POST /check-password     - проверка пароля (без указания локации!)`);
+  console.log(`   POST /get-mission        - получение задания (без указания локации!)`);
+  console.log(`   POST /check-answer       - проверка ответа (без указания локации!)`);
+  console.log(`   POST /request-hint       - запрос подсказки (без указания локации!)`);
+  console.log(`   GET  /health             - health check`);
   
   await setupWebhook();
   bot.webhookCallback(`/${WEBHOOK_SECRET}`, server);
   
-  console.log('✅ Telegram бот готов к работе через вебхуки');
+  console.log('✅ Telegram бот готов к работе');
   console.log('🔧 Админ ID:', ADMIN_USER_IDS[0]);
   console.log('🌐 Фронтенд URL:', FRONTEND_URL);
-  console.log('🚀 Фронтенд теперь размещён на том же сервере Railway!');
+  console.log('✨ Упрощённая регистрация: 1 игрок = 1 команда с уникальным маршрутом!');
 });
 
 const stop = () => {
