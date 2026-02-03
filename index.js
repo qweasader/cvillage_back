@@ -1,4 +1,4 @@
-// index.js — полная версия с исправленной проверкой ответов и защитой от недопустимых значений
+// index.js — исправленная версия с правильным сохранением ответа и изображения
 import { Telegraf } from 'telegraf';
 import http from 'http';
 import fs from 'fs';
@@ -8,8 +8,8 @@ import { QuestDatabase } from './database.js';
 import 'dotenv/config';
 
 // ==================== КОНФИГУРАЦИЯ ====================
-
 const ADMIN_USER_IDS = process.env.ADMIN_USER_IDS;
+
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const FRONTEND_URL = process.env.FRONTEND_URL;
 const PORT = process.env.PORT || 3000;
@@ -712,9 +712,9 @@ async function showAdminMenu(ctx) {
   const keyboard = {
     inline_keyboard: [
       [{ text: '🔑 Пароли доступа', callback_data: 'admin_passwords' }],
-      [{ text: '📝 Задания локаций', callback_data: 'admin_missions' }],
-      [{ text: '💡 Подсказки', callback_data: 'admin_hints' }],
-      [{ text: '📊 Статистика', callback_data: 'admin_stats' }]
+      [{ text: '📝 Задания локаций', callback_data:'admin_missions' }],
+      [{ text: '💡 Подсказки', callback_data:'admin_hints' }],
+      [{ text: '📊 Статистика', callback_data:'admin_stats' }]
     ]
   };
   
@@ -752,17 +752,17 @@ bot.action('admin_passwords', async (ctx) => {
     inline_keyboard: [
       [
         { text: '🚪 Врата', callback_data: 'set_pwd_gates' },
-        { text: '🛡️ Купол', callback_data: 'set_pwd_dome' }
+        { text: '🛡️ Купол', callback_data:'set_pwd_dome' }
       ],
       [
         { text: '🪞 Зеркало', callback_data: 'set_pwd_mirror' },
-        { text: '🔮 Камень', callback_data: 'set_pwd_stone' }
+        { text: '🔮 Камень', callback_data:'set_pwd_stone' }
       ],
       [
-        { text: '🏠 Хижина', callback_data: 'set_pwd_hut' },
-        { text: '👾 Логово', callback_data: 'set_pwd_lair' }
+        { text: '🏠 Хижина', callback_data:'set_pwd_hut' },
+        { text: '👾 Логово', callback_data:'set_pwd_lair' }
       ],
-      [{ text: '🔙 Назад', callback_data: 'admin_main' }]
+      [{ text: '🔙 Назад', callback_data:'admin_main' }]
     ]
   };
   
@@ -813,18 +813,18 @@ bot.action('admin_missions', async (ctx) => {
   const keyboard = {
     inline_keyboard: [
       [
-        { text: '🚪 Врата', callback_data: 'set_mission_gates' },
-        { text: '🛡️ Купол', callback_data: 'set_mission_dome' }
+        { text: '🚪 Врата', callback_data:'set_mission_gates' },
+        { text: '🛡️ Купол', callback_data:'set_mission_dome' }
       ],
       [
         { text: '🪞 Зеркало', callback_data: 'set_mission_mirror' },
-        { text: '🔮 Камень', callback_data: 'set_mission_stone' }
+        { text: '🔮 Камень', callback_data:'set_mission_stone' }
       ],
       [
-        { text: '🏠 Хижина', callback_data: 'set_mission_hut' },
+        { text: '🏠 Хижина', callback_data:'set_mission_hut' },
         { text: '👾 Логово', callback_data: 'set_mission_lair' }
       ],
-      [{ text: '🔙 Назад', callback_data: 'admin_main' }]
+      [{ text: '🔙 Назад', callback_data:'admin_main' }]
     ]
   };
   
@@ -875,8 +875,8 @@ bot.action('admin_hints', async (ctx) => {
   
   const keyboard = {
     inline_keyboard: [
-      [{ text: '➕ Добавить подсказку', callback_data: 'add_hint' }],
-      [{ text: '🔙 Назад', callback_data: 'admin_main' }]
+      [{ text: '➕ Добавить подсказку', callback_data:'add_hint' }],
+      [{ text: '🔙 Назад', callback_data:'admin_main' }]
     ]
   };
   
@@ -893,18 +893,18 @@ bot.action('add_hint', async (ctx) => {
   const keyboard = {
     inline_keyboard: [
       [
-        { text: '🚪 Врата', callback_data: 'hint_loc_gates' },
-        { text: '🛡️ Купол', callback_data: 'hint_loc_dome' }
+        { text: '🚪 Врата', callback_data:'hint_loc_gates' },
+        { text: '🛡️ Купол', callback_data:'hint_loc_dome' }
       ],
       [
-        { text: '🪞 Зеркало', callback_data: 'hint_loc_mirror' },
-        { text: '🔮 Камень', callback_data: 'hint_loc_stone' }
+        { text: '🪞 Зеркало', callback_data:'hint_loc_mirror' },
+        { text: '🔮 Камень', callback_data:'hint_loc_stone' }
       ],
       [
-        { text: '🏠 Хижина', callback_data: 'hint_loc_hut' },
-        { text: '👾 Логово', callback_data: 'hint_loc_lair' }
+        { text: '🏠 Хижина', callback_data:'hint_loc_hut' },
+        { text: '👾 Логово', callback_data:'hint_loc_lair' }
       ],
-      [{ text: '🔙 Отмена', callback_data: 'admin_hints' }]
+      [{ text: '🔙 Отмена', callback_data:'admin_hints' }]
     ]
   };
   
@@ -951,8 +951,8 @@ bot.action('admin_stats', async (ctx) => {
   
   const keyboard = {
     inline_keyboard: [
-      [{ text: '🔄 Обновить', callback_data: 'admin_stats' }],
-      [{ text: '🔙 Назад', callback_data: 'admin_main' }]
+      [{ text: '🔄 Обновить', callback_data:'admin_stats' }],
+      [{ text: '🔙 Назад', callback_data:'admin_main' }]
     ]
   };
   
@@ -1027,11 +1027,13 @@ bot.on('text', async (ctx) => {
       return;
     }
     
+    // ИСПРАВЛЕНО: используем сохраненный ответ из сессии, а не текущий ввод!
     if (settingType === 'mission' && step === 'image') {
-      const imageUrl = text !== '-' ? text : null;
+      // ИСПРАВЛЕНО: только если текст НЕ "-", используем его как URL изображения
+      const imageUrl = (text && text.trim() !== '-') ? text.trim() : null;
       
       try {
-        // ИСПРАВЛЕНО: используем сохраненный ответ из сессии, а не текущий ввод!
+        // ИСПРАВЛЕНО: используем сохраненный ответ из сессии (ctx.session.missionAnswer), а не text!
         db.setMission(location, ctx.session.missionText, ctx.session.missionAnswer, imageUrl);
         
         await ctx.replyWithHTML(
@@ -1039,9 +1041,10 @@ bot.on('text', async (ctx) => {
           `Локация: ${db.locationGraph[location].name}\n` +
           `Текст: ${ctx.session.missionText.substring(0, 50)}...\n` +
           `Ответ: <code>${ctx.session.missionAnswer}</code>\n` +
-          (imageUrl ? `Изображение: ${imageUrl}` : `Изображение: не задано`)
+          (imageUrl ? `🖼️ Изображение: ${imageUrl}` : `🖼️ Изображение: не задано`)
         );
         
+        // Очищаем сессию
         delete ctx.session.settingType;
         delete ctx.session.location;
         delete ctx.session.step;
@@ -1136,14 +1139,13 @@ server.listen(PORT, async () => {
   console.log(`   POST /${WEBHOOK_SECRET} → вебхуки Telegram`);
   console.log(`   POST /check-password  → API: проверка пароля`);
   console.log(`   POST /get-mission     → API: получение задания`);
-  console.log(`   POST /check-answer    → API: проверка ответа (с защитой от пустых ответов!)`);
+  console.log(`   POST /check-answer    → API: проверка ответа`);
   console.log(`   POST /request-hint    → API: запрос подсказки`);
   console.log(``);
   console.log(`🔑 КРИТИЧЕСКИ ВАЖНО:`);
-  console.log(`   • Ответы нормализуются: trim + toLowerCase + удаление спецсимволов`);
-  console.log(`   • В базе хранится оригинальный и нормализованный ответ`);
-  console.log(`   • При сохранении задания проверяется: ответ не может быть "-" или пустым`);
-  console.log(`   • При проверке ответа: если normalized_answer пустой — ошибка 500`);
+  console.log(`   • Ответ и изображение сохраняются ОТДЕЛЬНО`);
+  console.log(`   • На шаге "изображение" ответ берётся из сессии, а не из текущего ввода`);
+  console.log(`   • Ответ НЕ перезаписывается ссылкой на картинку`);
   
   await setupWebhook();
   bot.webhookCallback(`/${WEBHOOK_SECRET}`, server);
