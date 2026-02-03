@@ -1,4 +1,4 @@
-// database.js — с защитой от недопустимых ответов и улучшенной нормализацией
+// database.js — исправленная версия с защитой от перезаписи ответа изображением
 import sqlite3 from 'better-sqlite3';
 
 export class QuestDatabase {
@@ -110,7 +110,6 @@ export class QuestDatabase {
       )
     `);
 
-    // ИСПРАВЛЕНО: добавлена проверка на существование столбца
     const missionTableInfo = this.db.prepare("PRAGMA table_info(missions)").all();
     const hasNormalizedAnswer = missionTableInfo.some(col => col.name === 'normalized_answer');
     
@@ -166,8 +165,6 @@ export class QuestDatabase {
     
     console.log('✅ База данных инициализирована (упрощённая регистрация)');
   }
-
-  // ... остальные методы без изменений (getTeamByPlayerId, getTeamById, createTeamForPlayer, generateTeamCode, getCurrentLocationForTeam, getNextLocationForTeam, unlockNextLocationForTeam, completeLocationForTeam, getPlayer, isPlayerRegistered) ...
 
   getTeamByPlayerId(playerId) {
     return this.db.prepare('SELECT * FROM teams WHERE player_id = ?').get(String(playerId));
@@ -307,8 +304,6 @@ export class QuestDatabase {
     return player && player.is_registered;
   }
 
-  // ... пароли без изменений ...
-
   getPassword(location) {
     console.log(`\n🔐 [getPassword] Запрос пароля для локации: "${location}"`);
     
@@ -392,7 +387,7 @@ export class QuestDatabase {
     return normalized;
   }
 
-  // ============ ЗАДАНИЯ С ЗАЩИТОЙ ОТ НЕДОПУСТИМЫХ ОТВЕТОВ ============
+  // ============ ЗАДАНИЯ С ЗАЩИТОЙ ОТ ПЕРЕЗАПИСИ ОТВЕТА ============
   getMission(location) {
     return this.db.prepare('SELECT * FROM missions WHERE location = ?').get(location);
   }
@@ -422,16 +417,18 @@ export class QuestDatabase {
     console.log(`   Ответ (оригинал): "${answer}"`);
     console.log(`   Ответ (после trim): "${cleanAnswer}"`);
     console.log(`   Ответ (нормализованный): "${normalizedAnswer}"`);
+    console.log(`   Изображение: ${imageUrl || 'не задано'}`);
     
     this.db.prepare(`
       INSERT OR REPLACE INTO missions (location, text, answer, normalized_answer, image_url)
       VALUES (?, ?, ?, ?, ?)
     `).run(location, text.trim(), cleanAnswer, normalizedAnswer, imageUrl || null);
     
-    const saved = this.db.prepare('SELECT answer, normalized_answer FROM missions WHERE location = ?').get(location);
+    const saved = this.db.prepare('SELECT answer, normalized_answer, image_url FROM missions WHERE location = ?').get(location);
     console.log(`   ✅ Проверка сохранения:`);
     console.log(`      answer в БД: "${saved.answer}"`);
     console.log(`      normalized_answer в БД: "${saved.normalized_answer}"`);
+    console.log(`      image_url в БД: "${saved.image_url || 'null'}"`);
     
     // Финальная проверка
     if (!saved.normalized_answer || saved.normalized_answer.trim() === '') {
@@ -444,7 +441,7 @@ export class QuestDatabase {
     return this.db.prepare('SELECT * FROM missions').all();
   }
 
-  // УЛУЧШЕННАЯ НОРМАЛИЗАЦИЯ ОТВЕТОВ С ПРОВЕРКОЙ
+  // УЛУЧШЕННАЯ НОРМАЛИЗАЦИЯ ОТВЕТОВ
   normalizeAnswer(answer) {
     const original = answer;
     const trimmed = answer.trim();
@@ -466,8 +463,6 @@ export class QuestDatabase {
     
     return normalized;
   }
-
-  // ... подсказки, события, статистика без изменений ...
 
   getHint(location, level) {
     return this.db.prepare(`
