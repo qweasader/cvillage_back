@@ -1,4 +1,4 @@
-// database.js — упрощённая версия: 1 игрок = 1 команда
+// database.js — с поддержкой нормализации ответов
 import sqlite3 from 'better-sqlite3';
 
 export class QuestDatabase {
@@ -113,7 +113,7 @@ export class QuestDatabase {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS teams (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        player_id TEXT UNIQUE NOT NULL,  -- Связь с игроком
+        player_id TEXT UNIQUE NOT NULL,
         name TEXT NOT NULL,
         route TEXT NOT NULL DEFAULT '["gates","dome","mirror","stone","hut","lair"]',
         current_location TEXT DEFAULT 'gates',
@@ -148,12 +148,13 @@ export class QuestDatabase {
       )
     `);
 
-    // Задания
+    // Задания — ДОБАВЛЕН СТОЛБЕЦ ДЛЯ НОРМАЛИЗОВАННОГО ОТВЕТА
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS missions (
         location TEXT PRIMARY KEY,
         text TEXT NOT NULL,
         answer TEXT NOT NULL,
+        normalized_answer TEXT NOT NULL DEFAULT '',
         image_url TEXT
       )
     `);
@@ -189,6 +190,33 @@ export class QuestDatabase {
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_events_team ON events(team_id)');
     
     console.log('✅ База данных инициализирована (упрощённая регистрация)');
+    
+    // Проверяем структуру таблицы заданий и добавляем столбец при необходимости
+    const missionTableInfo = this.db.prepare("PRAGMA table_info(missions)").all();
+    const hasNormalizedAnswer = missionTableInfo.some(col => col.name === 'normalized_answer');
+    
+    if (!hasNormalizedAnswer) {
+      console.log('🔧 Добавление столбца normalized_answer в таблицу missions...');
+      try {
+        this.db.exec(`
+          ALTER TABLE missions 
+          ADD COLUMN normalized_answer TEXT NOT NULL DEFAULT ''
+        `);
+        console.log('✅ Столбец normalized_answer добавлен успешно');
+        
+        // Пересчитываем нормализованные ответы для существующих заданий
+        console.log('🔄 Пересчёт нормализованных ответов для существующих заданий...');
+        const missions = this.db.prepare('SELECT location, answer FROM missions').all();
+        missions.forEach(m => {
+          const normalized = this.normalizeAnswer(m.answer);
+          this.db.prepare('UPDATE missions SET normalized_answer = ? WHERE location = ?')
+            .run(normalized, m.location);
+          console.log(`   ${m.location}: "${m.answer}" → normalized: "${normalized}"`);
+        });
+      } catch (e) {
+        console.error('❌ Ошибка добавления столбца normalized_answer:', e.message);
+      }
+    }
   }
 
   // ============ РАБОТА С КОМАНДАМИ ============
@@ -200,7 +228,6 @@ export class QuestDatabase {
     return this.db.prepare('SELECT * FROM teams WHERE id = ?').get(teamId);
   }
 
-  // Создание команды при регистрации игрока
   createTeamForPlayer(playerId, playerName) {
     const cleanName = playerName.trim() || `Команда ${playerId.substring(0, 6)}`;
     const route = this.generateUniqueRoute();
@@ -419,20 +446,51 @@ export class QuestDatabase {
     return normalized;
   }
 
-  // ============ ЗАДАНИЯ ============
+  // ============ ЗАДАНИЯ С НОРМАЛИЗАЦИЕЙ ОТВЕТОВ ============
   getMission(location) {
     return this.db.prepare('SELECT * FROM missions WHERE location = ?').get(location);
   }
 
   setMission(location, text, answer, imageUrl = null) {
+    const cleanAnswer = answer.trim();
+    const normalizedAnswer = this.normalizeAnswer(cleanAnswer);
+    
+    console.log(`\n📝 [setMission] Сохранение задания для "${location}"`);
+    console.log(`   Текст: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`);
+    console.log(`   Ответ (оригинал): "${answer}"`);
+    console.log(`   Ответ (после trim): "${cleanAnswer}"`);
+    console.log(`   Ответ (нормализованный): "${normalizedAnswer}"`);
+    
     this.db.prepare(`
-      INSERT OR REPLACE INTO missions (location, text, answer, image_url)
-      VALUES (?, ?, ?, ?)
-    `).run(location, text.trim(), answer.trim(), imageUrl || null);
+      INSERT OR REPLACE INTO missions (location, text, answer, normalized_answer, image_url)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(location, text.trim(), cleanAnswer, normalizedAnswer, imageUrl || null);
+    
+    // Проверка сохранения
+    const saved = this.db.prepare('SELECT answer, normalized_answer FROM missions WHERE location = ?').get(location);
+    console.log(`   ✅ Проверка сохранения:`);
+    console.log(`      answer в БД: "${saved.answer}"`);
+    console.log(`      normalized_answer в БД: "${saved.normalized_answer}"`);
   }
 
   getAllMissions() {
     return this.db.prepare('SELECT * FROM missions').all();
+  }
+
+  // НОРМАЛИЗАЦИЯ ОТВЕТОВ (аналогично паролям)
+  normalizeAnswer(answer) {
+    const original = answer;
+    const trimmed = answer.trim();
+    const lowercased = trimmed.toLowerCase();
+    const normalized = lowercased.replace(/[^a-z0-9а-яё_]/g, ''); // Поддержка кириллицы
+    
+    console.log(`🔍 Нормализация ответа:`);
+    console.log(`   Исходный: "${original}" (длина: ${original.length})`);
+    console.log(`   После trim: "${trimmed}" (длина: ${trimmed.length})`);
+    console.log(`   После toLowerCase: "${lowercased}" (длина: ${lowercased.length})`);
+    console.log(`   После удаления спецсимволов: "${normalized}" (длина: ${normalized.length})`);
+    
+    return normalized;
   }
 
   // ============ ПОДСКАЗКИ ============
