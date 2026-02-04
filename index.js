@@ -1,4 +1,4 @@
-// index.js — полная версия с защитой от ошибки "message is not modified" и многопользовательским режимом
+// index.js — полная версия с автоматической регистрацией и детальным логированием ошибок
 import { Telegraf } from 'telegraf';
 import http from 'http';
 import fs from 'fs';
@@ -8,6 +8,7 @@ import { QuestDatabase } from './database.js';
 import 'dotenv/config';
 
 // ==================== КОНФИГУРАЦИЯ ====================
+
 const ADMIN_USER_IDS = process.env.ADMIN_USER_IDS;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const FRONTEND_URL = process.env.FRONTEND_URL;
@@ -75,13 +76,15 @@ async function safeEditMessage(ctx, text, extra = {}) {
   }
 }
 
-// ==================== HTTP СЕРВЕР С ЗАЩИТОЙ ОТ ОШИБОК ====================
+// ==================== HTTP СЕРВЕР С ПОЛНЫМ ЛОГИРОВАНИЕМ ====================
 const server = http.createServer(async (req, res) => {
+  // Устанавливаем заголовки CORS ДЛЯ ВСЕХ ответов
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Telegram-Init-Data');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Telegram-Init-Data, X-Telegram-InitData');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Max-Age', '86400');
   
+  // Обработка preflight запросов
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
     res.end();
@@ -91,7 +94,7 @@ const server = http.createServer(async (req, res) => {
   const parsedUrl = new URL(req.url, `http://${req.headers.host}`);
   const pathname = parsedUrl.pathname;
 
-  // Вебхуки Telegram
+  // ============ 1. ВЕБХУКИ TELEGRAM (POST) ============
   if (pathname === `/${WEBHOOK_SECRET}` && req.method === 'POST') {
     let body = '';
     req.on('data', chunk => body += chunk.toString());
@@ -108,49 +111,61 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Health check
+  // ============ 2. HEALTH CHECK (GET) ============
   if (pathname === '/health' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({ 
       status: 'ok', 
       timestamp: new Date().toISOString(),
       sqlite_busy_timeout: 30000,
-      sqlite_journal_mode: 'WAL'
+      sqlite_journal_mode: 'WAL',
+      routes: {
+        static: '/ (index.html, *.js, *.css)',
+        api: '/check-password, /get-mission, /check-answer, /request-hint'
+      }
     }));
     return;
   }
 
-  // Статические файлы
+  // ============ 3. СТАТИЧЕСКИЕ ФАЙЛЫ (ТОЛЬКО GET) ============
   if (req.method === 'GET') {
+    // Защита от обхода каталогов
     if (pathname.includes('..') || pathname.includes('%')) {
       res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
       res.end('403 Forbidden');
       return;
     }
 
+    // Определяем путь к файлу
     let filePath = path.join(PUBLIC_DIR, pathname === '/' ? 'index.html' : pathname);
     
+    // Если это директория — отдаём index.html
     try {
       if (fs.statSync(filePath).isDirectory()) {
         filePath = path.join(filePath, 'index.html');
       }
     } catch (e) {
+      // Файл не существует — пробуем добавить .html
       if (!path.extname(filePath)) {
         const htmlPath = filePath + '.html';
         if (fs.existsSync(htmlPath)) {
           filePath = htmlPath;
         } else {
+          // Для неизвестных маршрутов отдаём главную страницу (SPA)
           filePath = path.join(PUBLIC_DIR, 'index.html');
         }
       }
     }
 
+    // Проверяем существование файла
     if (!fs.existsSync(filePath)) {
+      console.warn(`⚠️ Файл не найден: ${filePath}`);
       res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
       res.end('404 Not Found');
       return;
     }
 
+    // Определяем тип содержимого
     const extname = String(path.extname(filePath)).toLowerCase();
     const mimeTypes = {
       '.html': 'text/html; charset=utf-8',
@@ -172,10 +187,12 @@ const server = http.createServer(async (req, res) => {
 
     const contentType = mimeTypes[extname] || 'application/octet-stream';
 
+    // Читаем и отправляем файл
     try {
       const content = fs.readFileSync(filePath);
       res.writeHead(200, { 'Content-Type': contentType });
       res.end(content);
+      console.log(`✅ Отправлен статический файл: ${pathname} (${content.length} байт)`);
       return;
     } catch (error) {
       console.error(`❌ Ошибка чтения файла ${filePath}:`, error.message);
@@ -185,12 +202,24 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  // ============ API-ЗАПРОСЫ С ДЕТАЛЬНЫМ ЛОГИРОВАНИЕМ ОШИБОК ============
+  // ============ 4. API-ЗАПРОСЫ (ТОЛЬКО POST) ============
   let userId = null;
-  const initData = req.headers['x-telegram-init-data'] || req.headers['x-telegram-initdata'] || '';
+  let initData = req.headers['x-telegram-init-data'] || req.headers['x-telegram-initdata'] || '';
   
-  console.log(`\n🔐 API-запрос: ${req.method} ${pathname} от ${req.headers['user-agent']?.substring(0, 30)}`);
+  // Дополнительная проверка для случаев, когда initData передаётся в другом регистре
+  if (!initData) {
+    Object.keys(req.headers).forEach(key => {
+      if (key.toLowerCase().includes('telegram-init')) {
+        initData = req.headers[key];
+      }
+    });
+  }
   
+  console.log(`\n🔐 API-запрос: ${req.method} ${pathname}`);
+  console.log(`   User-Agent: ${req.headers['user-agent']?.substring(0, 50) || 'не указан'}`);
+  console.log(`   Заголовок initData: ${initData ? 'ПРИСУТСТВУЕТ (длина ' + initData.length + ')' : 'ОТСУТСТВУЕТ'}`);
+  
+  // Извлечение userId из initData
   if (initData) {
     try {
       const params = new URLSearchParams(initData);
@@ -199,17 +228,23 @@ const server = http.createServer(async (req, res) => {
       if (userParam) {
         const userObj = JSON.parse(decodeURIComponent(userParam));
         userId = String(userObj.id);
-        console.log(`   ✅ Извлечён userId: ${userId}`);
+        console.log(`   ✅ Извлечён userId: ${userId} (${userObj.first_name} ${userObj.last_name || ''})`);
+      } else {
+        console.warn('   ⚠️ Параметр "user" не найден в initData');
       }
     } catch (e) {
       console.error('   ❌ Ошибка парсинга initData:', e.message);
+      console.error('   initData (первые 200 символов):', initData.substring(0, 200));
     }
   }
 
+  // КРИТИЧЕСКАЯ ПРОВЕРКА: если нет userId — ошибка авторизации
   if (!userId) {
-    console.error('   ❌ ОШИБКА: Не удалось извлечь userId из initData');
-    console.error('   Заголовки запроса:', Object.keys(req.headers).filter(h => h.toLowerCase().includes('telegram')).join(', '));
-    console.error('   Длина initData:', initData.length);
+    console.error('   ❌ КРИТИЧЕСКАЯ ОШИБКА: Не удалось извлечь userId из initData');
+    console.error('   Все заголовки с "telegram":');
+    Object.keys(req.headers)
+      .filter(h => h.toLowerCase().includes('telegram'))
+      .forEach(h => console.error(`      ${h}: ${req.headers[h]?.substring(0, 100)}`));
     
     res.writeHead(401, { 
       'Content-Type': 'application/json; charset=utf-8',
@@ -218,58 +253,71 @@ const server = http.createServer(async (req, res) => {
     res.end(JSON.stringify({ 
       success: false, 
       message: 'Не авторизован. Откройте приложение через кнопку в боте!',
-      error_code: 'MISSING_USER_ID'
+      error_code: 'MISSING_USER_ID',
+      debug: {
+        initDataPresent: !!initData,
+        initDataLength: initData.length,
+        headersReceived: Object.keys(req.headers).filter(h => h.toLowerCase().includes('telegram'))
+      }
     }));
     return;
   }
 
-  // ИСПРАВЛЕНО: надёжное получение игрока с обработкой ошибок
+  // ============ АВТОМАТИЧЕСКАЯ РЕГИСТРАЦИЯ ИГРОКА ============
   let player = null;
   try {
     player = db.getPlayer(userId);
+    
+    if (!player || !player.is_registered) {
+      console.log(`   ℹ️ Игрок ${userId} не зарегистрирован или не активен — запускаем автоматическую регистрацию...`);
+      
+      // Автоматическая регистрация при первом запросе
+      const { player: newPlayer, team } = db.createTeamForPlayer(
+        userId, 
+        `Игрок ${userId.substring(0, 6)}`
+      );
+      
+      player = newPlayer;
+      console.log(`   ✅ Автоматическая регистрация игрока ${userId} завершена`);
+    } else {
+      console.log(`   ✅ Игрок ${userId} найден в базе: ${player.first_name}`);
+    }
   } catch (error) {
-    console.error(`   ❌ КРИТИЧЕСКАЯ ОШИБКА получения игрока ${userId}:`, error.message);
+    console.error(`   ❌ ОШИБКА автоматической регистрации игрока ${userId}:`, error.message);
     res.writeHead(500, { 
       'Content-Type': 'application/json; charset=utf-8',
       'Access-Control-Allow-Origin': '*'
     });
     res.end(JSON.stringify({ 
       success: false, 
-      message: 'Ошибка базы данных. Попробуйте обновить страницу.',
-      error_code: 'DB_PLAYER_ERROR',
-      debug: { userId }
+      message: 'Ошибка регистрации. Попробуйте обновить страницу или написать /start в боте.',
+      error_code: 'REGISTRATION_FAILED',
+      debug: { userId, error: error.message.substring(0, 100) }
     }));
     return;
   }
 
-  if (!player || !player.is_registered) {
-    console.warn(`   ⚠️ Игрок ${userId} не зарегистрирован`);
+  // ============ ПОЛУЧЕНИЕ КОМАНДЫ ============
+  let team = null;
+  try {
+    team = db.getTeamByPlayerId(userId);
     
-    // Автоматическая регистрация при первом запросе
-    try {
-      const { player: newPlayer, team } = db.createTeamForPlayer(userId, `Игрок ${userId.substring(0, 6)}`);
-      player = newPlayer;
-      console.log(`   ✅ Автоматическая регистрация игрока ${userId} завершена`);
-    } catch (error) {
-      console.error(`   ❌ ОШИБКА автоматической регистрации игрока ${userId}:`, error.message);
+    if (!team) {
+      console.error(`   ❌ КРИТИЧЕСКАЯ ОШИБКА: команда не найдена для игрока ${userId} после регистрации`);
       res.writeHead(500, { 
         'Content-Type': 'application/json; charset=utf-8',
         'Access-Control-Allow-Origin': '*'
       });
       res.end(JSON.stringify({ 
         success: false, 
-        message: 'Ошибка регистрации. Попробуйте обновить страницу или написать /start в боте.',
-        error_code: 'REGISTRATION_FAILED',
-        debug: { userId, error: error.message.substring(0, 100) }
+        message: 'Ошибка команды. Напишите /start в боте для повторной регистрации.',
+        error_code: 'TEAM_NOT_FOUND',
+        debug: { userId }
       }));
       return;
     }
-  }
-
-  // ИСПРАВЛЕНО: надёжное получение команды с обработкой ошибок
-  let team = null;
-  try {
-    team = db.getTeamByPlayerId(userId);
+    
+    console.log(`   ✅ Команда найдена: ${team.name} (ID: ${team.id})`);
   } catch (error) {
     console.error(`   ❌ КРИТИЧЕСКАЯ ОШИБКА получения команды для игрока ${userId}:`, error.message);
     res.writeHead(500, { 
@@ -285,38 +333,27 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (!team) {
-    console.error(`   ❌ КРИТИЧЕСКАЯ ОШИБКА: команда не найдена для игрока ${userId}`);
-    res.writeHead(500, { 
-      'Content-Type': 'application/json; charset=utf-8',
-      'Access-Control-Allow-Origin': '*'
-    });
-    res.end(JSON.stringify({ 
-      success: false, 
-      message: 'Ошибка команды. Напишите /start в боте для повторной регистрации.',
-      error_code: 'TEAM_NOT_FOUND',
-      debug: { userId }
-    }));
-    return;
-  }
-
+  // Определение текущей локации по маршруту
   const currentLocation = db.getCurrentLocationForTeam(team.id);
   const unlocked = JSON.parse(team.unlocked_locations || '["gates"]');
   
   console.log(`   📍 Текущая локация команды ${team.id}: "${currentLocation}"`);
   console.log(`   🔓 Разблокировано: ${unlocked.join(', ')}`);
+  console.log(`   ✅ Все проверки пройдены — обработка запроса...`);
 
+  // Парсинг тела запроса
   let body = '';
   req.on('data', chunk => body += chunk.toString());
   req.on('end', async () => {
     try {
       const data = body ? JSON.parse(body) : {};
 
-      // Получение задания — КРИТИЧЕСКИ ВАЖНЫЙ ЭНДПОИНТ
+      // ============ ПОЛУЧЕНИЕ ЗАДАНИЯ ============
       if (pathname === '/get-mission' && req.method === 'POST') {
         console.log(`\n📜 [get-mission] Запрос задания для локации "${currentLocation}" от игрока ${userId}`);
         
         if (!unlocked.includes(currentLocation)) {
+          console.warn(`   ⚠️ Локация "${currentLocation}" не разблокирована для команды ${team.id}`);
           res.writeHead(403, { 
             'Content-Type': 'application/json; charset=utf-8',
             'Access-Control-Allow-Origin': '*'
@@ -346,6 +383,7 @@ const server = http.createServer(async (req, res) => {
         }
         
         if (!mission) {
+          console.warn(`   ⚠️ Задание для локации "${currentLocation}" не настроено`);
           res.writeHead(404, { 
             'Content-Type': 'application/json; charset=utf-8',
             'Access-Control-Allow-Origin': '*'
@@ -357,6 +395,7 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         
+        // УСПЕШНЫЙ ОТВЕТ
         res.writeHead(200, { 
           'Content-Type': 'application/json; charset=utf-8',
           'Access-Control-Allow-Origin': '*'
@@ -380,10 +419,12 @@ const server = http.createServer(async (req, res) => {
             route: JSON.parse(team.route)
           }
         }));
+        
+        console.log(`   ✅ Задание для локации "${currentLocation}" успешно отправлено`);
         return;
       }
 
-      // Проверка пароля
+      // ============ ПРОВЕРКА ПАРОЛЯ ============
       if (pathname === '/check-password' && req.method === 'POST') {
         const { password } = data;
         
@@ -425,6 +466,8 @@ const server = http.createServer(async (req, res) => {
         const normalizedInput = db.normalizePassword(cleanInput);
         const isCorrect = normalizedInput === passwordData.normalized;
         
+        console.log(`   🔑 Результат проверки пароля: ${isCorrect ? '✅ ВЕРНО' : '❌ НЕВЕРНО'}`);
+        
         if (isCorrect) {
           db.logEvent('location_unlocked', team.id, currentLocation, { userId });
           res.writeHead(200, { 
@@ -452,7 +495,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      // Проверка ответа
+      // ============ ПРОВЕРКА ОТВЕТА ============
       if (pathname === '/check-answer' && req.method === 'POST') {
         const { answer } = data;
         
@@ -542,9 +585,11 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      // Запрос подсказки
+      // ============ ЗАПРОС ПОДСКАЗКИ ============
       if (pathname === '/request-hint' && req.method === 'POST') {
         const { hintLevel = 1 } = data;
+        
+        console.log(`\n💡 Запрос подсказки (уровень ${hintLevel}) для локации "${currentLocation}"`);
         
         if (team.hints_used >= 3) {
           res.writeHead(200, { 
@@ -594,6 +639,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
+      // 404 для неизвестных эндпоинтов
       res.writeHead(404, { 
         'Content-Type': 'application/json; charset=utf-8',
         'Access-Control-Allow-Origin': '*'
@@ -601,7 +647,7 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({ error: 'Not found' }));
       
     } catch (error) {
-      console.error(`❌ КРИТИЧЕСКАЯ ОШИБКА обработки API-запроса от игрока ${userId}:`, error);
+      console.error('❌ КРИТИЧЕСКАЯ ОШИБКА обработки API-запроса:', error);
       console.error('Стек:', error.stack);
       
       res.writeHead(500, { 
@@ -622,7 +668,7 @@ const server = http.createServer(async (req, res) => {
   });
 });
 
-// ==================== TELEGRAM БОТ С ЗАЩИТОЙ ОТ ОШИБОК РЕДАКТИРОВАНИЯ ====================
+// ==================== TELEGRAM БОТ — ПОЛНЫЙ КОД ====================
 bot.use((ctx, next) => {
   ctx.isAdmin = ADMIN_USER_IDS.includes(ctx.from?.id);
   ctx.session = getSession(ctx.from?.id);
@@ -677,13 +723,12 @@ bot.start(async (ctx) => {
   );
 });
 
-// ИСПРАВЛЕНО: безопасное редактирование в обработчиках кнопок
 bot.action('admin_panel', async (ctx) => {
   if (!ctx.isAdmin) {
     await ctx.answerCbQuery('Доступ запрещён', { show_alert: true });
     return;
   }
-  await showAdminMenu(ctx, true); // true = использовать редактирование
+  await showAdminMenu(ctx, true);
 });
 
 bot.command('admin', async (ctx) => {
@@ -691,7 +736,7 @@ bot.command('admin', async (ctx) => {
     await ctx.replyWithHTML(`🚫 <b>Доступ запрещён</b>\n\nВаш ID: <code>${ctx.from.id}</code>`);
     return;
   }
-  await showAdminMenu(ctx, false); // false = отправлять новое сообщение
+  await showAdminMenu(ctx, false);
 });
 
 bot.action('team_stats', async (ctx) => {
@@ -721,11 +766,70 @@ bot.action('team_stats', async (ctx) => {
     `💡 Осталось подсказок: ${hintsLeft}/3\n\n` +
     `<b>Ваш маршрут:</b>\n${routeText}`;
   
-  // ИСПРАВЛЕНО: используем безопасное редактирование
   await safeEditMessage(ctx, message, { parse_mode: 'HTML' });
 });
 
-// ИСПРАВЛЕНО: безопасное редактирование в админ-меню
+bot.command('stats', async (ctx) => {
+  const player = await db.getPlayer(ctx.from.id);
+  if (!player || !player.is_registered) {
+    await ctx.reply('Сначала зарегистрируйтесь командой /start');
+    return;
+  }
+  
+  const team = db.getTeamByPlayerId(ctx.from.id);
+  const completed = JSON.parse(team.completed_locations || '[]').length;
+  const unlocked = JSON.parse(team.unlocked_locations || '["gates"]').length;
+  const hintsLeft = 3 - team.hints_used;
+  
+  await ctx.replyWithHTML(
+    `📊 <b>Ваша статистика</b>\n\n` +
+    `👤 Игрок: ${player.first_name}\n` +
+    `🛡️ Команда: ${team.name}\n` +
+    `✅ Пройдено локаций: ${completed}/6\n` +
+    `🔓 Открыто локаций: ${unlocked}/6\n` +
+    `💡 Осталось подсказок: ${hintsLeft}/3`
+  );
+});
+
+bot.command('hint', async (ctx) => {
+  const player = await db.getPlayer(ctx.from.id);
+  if (!player || !player.is_registered) {
+    await ctx.reply('Сначала зарегистрируйтесь командой /start');
+    return;
+  }
+  
+  const team = db.getTeamByPlayerId(ctx.from.id);
+  if (team.hints_used >= 3) {
+    await ctx.reply('🚫 У вашей команды закончились подсказки!');
+    return;
+  }
+  
+  const completed = JSON.parse(team.completed_locations || '[]');
+  const nextLocationIndex = completed.length;
+  const currentLocation = Object.keys(db.locationGraph)[nextLocationIndex] || 'gates';
+  
+  const hintLevel = team.hints_used + 1;
+  const hint = await db.getHint(currentLocation, hintLevel);
+  
+  if (!hint) {
+    await ctx.reply('🤔 Подсказка для текущей локации не настроена.');
+    return;
+  }
+  
+  db.db.prepare('UPDATE teams SET hints_used = hints_used + 1, last_activity = CURRENT_TIMESTAMP WHERE id = ?')
+    .run(team.id);
+  
+  await db.logEvent('hint_used', team.id, currentLocation, { userId: ctx.from.id, level: hintLevel });
+  
+  const hintsLeft = 3 - (team.hints_used + 1);
+  
+  await ctx.replyWithHTML(
+    `💡 <b>Подсказка для "${db.locationGraph[currentLocation].name}"</b>\n\n` +
+    `${hint.text}\n\n` +
+    `Осталось подсказок: ${hintsLeft}/3`
+  );
+});
+
 async function showAdminMenu(ctx, useEdit = true) {
   const pwdCount = db.getAllPasswords().length;
   const missionCount = db.getAllMissions().length;
@@ -747,7 +851,6 @@ async function showAdminMenu(ctx, useEdit = true) {
   };
   
   if (useEdit && ctx.callbackQuery) {
-    // ИСПРАВЛЕНО: безопасное редактирование вместо прямого вызова
     await safeEditMessage(ctx, message, {
       parse_mode: 'HTML',
       reply_markup: keyboard
@@ -760,7 +863,6 @@ async function showAdminMenu(ctx, useEdit = true) {
   }
 }
 
-// ИСПРАВЛЕНО: все обработчики кнопок используют безопасное редактирование
 bot.action('admin_passwords', async (ctx) => {
   if (!ctx.isAdmin) return;
   
@@ -1125,7 +1227,6 @@ bot.on('text', async (ctx) => {
   }
 });
 
-// ИСПРАВЛЕНО: глобальный обработчик ошибок с фильтрацией "message is not modified"
 bot.catch((err, ctx) => {
   // Игнорируем ошибку "message is not modified" — она не критична
   if (err?.response?.description?.includes('message is not modified')) {
@@ -1182,6 +1283,7 @@ server.listen(PORT, async () => {
   console.log(`   • PRAGMA synchronous = NORMAL`);
   console.log(`   • PRAGMA temp_store = MEMORY`);
   console.log(`🛡️  Telegram API: защита от ошибки "message is not modified" ВКЛЮЧЕНА`);
+  console.log(`🛡️  Автоматическая регистрация игроков: ВКЛЮЧЕНА`);
   console.log(``);
   console.log(`   GET /                 → index.html (фронтенд)`);
   console.log(`   GET /health           → health check`);
