@@ -6,8 +6,6 @@ export class QuestDatabase {
     this.dbPath = 'quest.db';
     this.initDatabase();
     this.locationGraph = this.buildLocationGraph();
-    this.writeQueue = [];
-    this.isWriting = false;
   }
 
   // ============ ПОСТРОЕНИЕ ГРАФА ЗАВИСИМОСТЕЙ ============
@@ -172,6 +170,16 @@ export class QuestDatabase {
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at)');
     
     console.log('✅ База данных инициализирована (многопользовательский режим)');
+    
+    // Проверяем, что таблицы созданы корректно
+    const tables = this.db.prepare(`
+      SELECT name FROM sqlite_master 
+      WHERE type='table' AND name IN ('teams', 'players', 'missions', 'hints', 'events')
+    `).all();
+    
+    console.log('📊 Созданные таблицы:');
+    tables.forEach(t => console.log(`   • ${t.name}`));
+    
     console.log('='.repeat(80) + '\n');
   }
 
@@ -187,7 +195,7 @@ export class QuestDatabase {
           const delay = attempt * 100;
           const start = Date.now();
           while (Date.now() - start < delay) {
-            // Активное ожидание (лучше для SQLite чем setTimeout в этом контексте)
+            // Активное ожидание
           }
           
           if (attempt === maxRetries) {
@@ -316,38 +324,70 @@ export class QuestDatabase {
     }
   }
 
-  // ИСПРАВЛЕНО: надёжное создание команды с обработкой конфликтов
+  // ИСПРАВЛЕНО: надёжное создание команды с обработкой конфликтов и дубликатов
   createTeamForPlayer(playerId, playerName) {
     const cleanPlayerId = String(playerId);
-    const cleanName = playerName.trim() || `Команда ${cleanPlayerId.substring(0, 6)}`;
+    const cleanName = playerName.trim() || `Игрок ${cleanPlayerId.substring(0, 6)}`;
     const route = this.generateUniqueRoute();
     const routeJson = JSON.stringify(route);
     
     console.log(`🆕 Создание команды для игрока ${cleanPlayerId} с маршрутом: ${route.join(' → ')}`);
     
     try {
-      // Сначала регистрируем игрока
-      this.safeRun(
-        this.db.prepare(`
-          INSERT OR REPLACE INTO players (id, first_name, is_registered, registered_at)
-          VALUES (?, ?, 1, CURRENT_TIMESTAMP)
-        `),
-        [cleanPlayerId, cleanName]
+      // Сначала проверяем, не существует ли уже игрок
+      let player = this.safeGet(
+        this.db.prepare('SELECT * FROM players WHERE id = ?'),
+        [cleanPlayerId]
       );
       
-      // Создаём команду
-      this.safeRun(
-        this.db.prepare(`
-          INSERT INTO teams (player_id, name, route, unlocked_locations)
-          VALUES (?, ?, ?, ?)
-        `),
-        [cleanPlayerId, cleanName, routeJson, JSON.stringify([route[0]])]
-      );
+      if (!player) {
+        // Регистрируем нового игрока
+        this.safeRun(
+          this.db.prepare(`
+            INSERT INTO players (id, first_name, is_registered, registered_at)
+            VALUES (?, ?, 1, CURRENT_TIMESTAMP)
+          `),
+          [cleanPlayerId, cleanName]
+        );
+        console.log(`   ✅ Игрок ${cleanPlayerId} зарегистрирован`);
+      } else {
+        console.log(`   ℹ️ Игрок ${cleanPlayerId} уже существует, обновляем имя`);
+        // Обновляем имя, если игрок уже существует
+        this.safeRun(
+          this.db.prepare(`
+            UPDATE players SET first_name = ?, last_activity = CURRENT_TIMESTAMP 
+            WHERE id = ?
+          `),
+          [cleanName, cleanPlayerId]
+        );
+      }
       
-      const team = this.getTeamByPlayerId(cleanPlayerId);
+      // Проверяем, не существует ли уже команда для этого игрока
+      let team = this.getTeamByPlayerId(cleanPlayerId);
       
       if (!team) {
-        throw new Error(`Не удалось создать команду для игрока ${cleanPlayerId}`);
+        // Создаём новую команду
+        this.safeRun(
+          this.db.prepare(`
+            INSERT INTO teams (player_id, name, route, unlocked_locations)
+            VALUES (?, ?, ?, ?)
+          `),
+          [cleanPlayerId, cleanName, routeJson, JSON.stringify([route[0]])]
+        );
+        console.log(`   ✅ Команда создана для игрока ${cleanPlayerId}`);
+      } else {
+        console.log(`   ℹ️ Команда для игрока ${cleanPlayerId} уже существует`);
+      }
+      
+      // Получаем актуальные данные
+      team = this.getTeamByPlayerId(cleanPlayerId);
+      player = this.safeGet(
+        this.db.prepare('SELECT * FROM players WHERE id = ?'),
+        [cleanPlayerId]
+      );
+      
+      if (!team || !player) {
+        throw new Error(`Не удалось создать команду или игрока для ${cleanPlayerId}`);
       }
       
       this.logEvent('team_created', team.id, null, { 
@@ -356,7 +396,7 @@ export class QuestDatabase {
         route 
       });
       
-      console.log(`✅ Команда ${team.id} успешно создана для игрока ${cleanPlayerId}`);
+      console.log(`✅ Команда ${team.id} успешно создана/получена для игрока ${cleanPlayerId}`);
       return { 
         player: { 
           id: cleanPlayerId, 
@@ -368,10 +408,10 @@ export class QuestDatabase {
     } catch (error) {
       // Обработка дубликата (игрок уже зарегистрирован)
       if (error.message.includes('UNIQUE constraint failed') || error.message.includes('SQLITE_CONSTRAINT')) {
-        console.warn(`⚠️ Игрок ${cleanPlayerId} уже зарегистрирован, получаем существующую команду...`);
+        console.warn(`⚠️ Конфликт при регистрации игрока ${cleanPlayerId}, получаем существующие данные...`);
         const existingTeam = this.getTeamByPlayerId(cleanPlayerId);
-        if (existingTeam) {
-          const existingPlayer = this.getPlayer(cleanPlayerId);
+        const existingPlayer = this.getPlayer(cleanPlayerId);
+        if (existingTeam && existingPlayer) {
           return { player: existingPlayer, team: existingTeam };
         }
       }
