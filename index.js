@@ -1,4 +1,4 @@
-// index.js — исправленная версия с правильным сохранением ответа и изображения
+// index.js — полная версия с защитой от ошибки "message is not modified" и многопользовательским режимом
 import { Telegraf } from 'telegraf';
 import http from 'http';
 import fs from 'fs';
@@ -9,7 +9,6 @@ import 'dotenv/config';
 
 // ==================== КОНФИГУРАЦИЯ ====================
 const ADMIN_USER_IDS = process.env.ADMIN_USER_IDS;
-
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const FRONTEND_URL = process.env.FRONTEND_URL;
 const PORT = process.env.PORT || 3000;
@@ -29,15 +28,60 @@ function getSession(userId) {
   return sessions.get(userId);
 }
 
-// ==================== HTTP СЕРВЕР С ПРАВИЛЬНЫМ ПОРЯДКОМ ОБРАБОТКИ ====================
+// ==================== ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ: БЕЗОПАСНОЕ РЕДАКТИРОВАНИЕ СООБЩЕНИЯ ====================
+async function safeEditMessage(ctx, text, extra = {}) {
+  try {
+    // Проверяем, есть ли у контекста сообщение для редактирования
+    if (!ctx.callbackQuery?.message) {
+      console.warn('⚠️ Невозможно отредактировать сообщение: нет сообщения в контексте');
+      await ctx.answerCbQuery();
+      return;
+    }
+    
+    // Получаем текущее содержимое сообщения
+    const currentText = ctx.callbackQuery.message.text || ctx.callbackQuery.message.caption || '';
+    const currentMarkup = JSON.stringify(ctx.callbackQuery.message.reply_markup || {});
+    const newText = text;
+    const newMarkup = JSON.stringify(extra.reply_markup || {});
+    
+    // Если содержимое не изменилось — просто отвечаем на колбэк без редактирования
+    if (currentText === newText && currentMarkup === newMarkup) {
+      console.log('ℹ️ Пропуск редактирования: содержимое сообщения не изменилось');
+      await ctx.answerCbQuery();
+      return;
+    }
+    
+    // Безопасное редактирование с обработкой ошибки "message is not modified"
+    await ctx.editMessageText(text, extra);
+    await ctx.answerCbQuery();
+    
+  } catch (error) {
+    // Обработка специфической ошибки Telegram
+    if (error?.response?.description?.includes('message is not modified')) {
+      console.log('ℹ️ Пропущена ошибка "message is not modified" — содержимое не изменилось');
+      await ctx.answerCbQuery();
+      return;
+    }
+    
+    // Обработка ошибки "message to edit not found" (сообщение уже удалено)
+    if (error?.response?.description?.includes('message to edit not found')) {
+      console.warn('⚠️ Сообщение уже удалено, невозможно отредактировать');
+      await ctx.answerCbQuery('Сообщение уже закрыто', { show_alert: true });
+      return;
+    }
+    
+    // Другие ошибки — пробрасываем выше для глобального обработчика
+    throw error;
+  }
+}
+
+// ==================== HTTP СЕРВЕР С ЗАЩИТОЙ ОТ ОШИБОК ====================
 const server = http.createServer(async (req, res) => {
-  // Устанавливаем заголовки CORS ДЛЯ ВСЕХ ответов
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Telegram-Init-Data');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Max-Age', '86400');
   
-  // Обработка preflight запросов
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
     res.end();
@@ -47,7 +91,7 @@ const server = http.createServer(async (req, res) => {
   const parsedUrl = new URL(req.url, `http://${req.headers.host}`);
   const pathname = parsedUrl.pathname;
 
-  // ============ 1. ВЕБХУКИ TELEGRAM (POST) ============
+  // Вебхуки Telegram
   if (pathname === `/${WEBHOOK_SECRET}` && req.method === 'POST') {
     let body = '';
     req.on('data', chunk => body += chunk.toString());
@@ -64,21 +108,19 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ============ 2. HEALTH CHECK (GET) ============
+  // Health check
   if (pathname === '/health' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({ 
       status: 'ok', 
       timestamp: new Date().toISOString(),
-      routes: {
-        static: '/ (index.html, *.js, *.css)',
-        api: '/check-password, /get-mission, /check-answer, /request-hint'
-      }
+      sqlite_busy_timeout: 30000,
+      sqlite_journal_mode: 'WAL'
     }));
     return;
   }
 
-  // ============ 3. СТАТИЧЕСКИЕ ФАЙЛЫ (ТОЛЬКО GET) ============
+  // Статические файлы
   if (req.method === 'GET') {
     if (pathname.includes('..') || pathname.includes('%')) {
       res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
@@ -134,7 +176,6 @@ const server = http.createServer(async (req, res) => {
       const content = fs.readFileSync(filePath);
       res.writeHead(200, { 'Content-Type': contentType });
       res.end(content);
-      console.log(`✅ Отправлен статический файл: ${pathname} (${content.length} байт)`);
       return;
     } catch (error) {
       console.error(`❌ Ошибка чтения файла ${filePath}:`, error.message);
@@ -144,12 +185,11 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  // ============ 4. API-ЗАПРОСЫ (ТОЛЬКО POST) ============
+  // ============ API-ЗАПРОСЫ С ДЕТАЛЬНЫМ ЛОГИРОВАНИЕМ ОШИБОК ============
   let userId = null;
   const initData = req.headers['x-telegram-init-data'] || req.headers['x-telegram-initdata'] || '';
   
-  console.log(`\n🔐 API-запрос: ${req.method} ${pathname}`);
-  console.log(`   Заголовок initData: ${initData ? 'ПРИСУТСТВУЕТ (длина ' + initData.length + ')' : 'ОТСУТСТВУЕТ'}`);
+  console.log(`\n🔐 API-запрос: ${req.method} ${pathname} от ${req.headers['user-agent']?.substring(0, 30)}`);
   
   if (initData) {
     try {
@@ -160,8 +200,6 @@ const server = http.createServer(async (req, res) => {
         const userObj = JSON.parse(decodeURIComponent(userParam));
         userId = String(userObj.id);
         console.log(`   ✅ Извлечён userId: ${userId}`);
-      } else {
-        console.warn('   ⚠️ Параметр "user" не найден в initData');
       }
     } catch (e) {
       console.error('   ❌ Ошибка парсинга initData:', e.message);
@@ -169,7 +207,10 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (!userId) {
-    console.error('   ❌ КРИТИЧЕСКАЯ ОШИБКА: Не удалось извлечь userId из initData');
+    console.error('   ❌ ОШИБКА: Не удалось извлечь userId из initData');
+    console.error('   Заголовки запроса:', Object.keys(req.headers).filter(h => h.toLowerCase().includes('telegram')).join(', '));
+    console.error('   Длина initData:', initData.length);
+    
     res.writeHead(401, { 
       'Content-Type': 'application/json; charset=utf-8',
       'Access-Control-Allow-Origin': '*'
@@ -177,38 +218,84 @@ const server = http.createServer(async (req, res) => {
     res.end(JSON.stringify({ 
       success: false, 
       message: 'Не авторизован. Откройте приложение через кнопку в боте!',
-      debug: {
-        initDataPresent: !!initData,
-        initDataLength: initData.length,
-        headers: Object.keys(req.headers).filter(h => h.toLowerCase().includes('telegram'))
-      }
+      error_code: 'MISSING_USER_ID'
     }));
     return;
   }
 
-  const player = db.getPlayer(userId);
-  if (!player || !player.is_registered) {
-    res.writeHead(403, { 
-      'Content-Type': 'application/json; charset=utf-8',
-      'Access-Control-Allow-Origin': '*'
-    });
-    res.end(JSON.stringify({ 
-      success: false, 
-      message: 'Сначала зарегистрируйтесь в боте! Напишите /start',
-      requiresRegistration: true
-    }));
-    return;
-  }
-
-  const team = db.getTeamByPlayerId(userId);
-  if (!team) {
+  // ИСПРАВЛЕНО: надёжное получение игрока с обработкой ошибок
+  let player = null;
+  try {
+    player = db.getPlayer(userId);
+  } catch (error) {
+    console.error(`   ❌ КРИТИЧЕСКАЯ ОШИБКА получения игрока ${userId}:`, error.message);
     res.writeHead(500, { 
       'Content-Type': 'application/json; charset=utf-8',
       'Access-Control-Allow-Origin': '*'
     });
     res.end(JSON.stringify({ 
       success: false, 
-      message: 'Ошибка: команда не найдена' 
+      message: 'Ошибка базы данных. Попробуйте обновить страницу.',
+      error_code: 'DB_PLAYER_ERROR',
+      debug: { userId }
+    }));
+    return;
+  }
+
+  if (!player || !player.is_registered) {
+    console.warn(`   ⚠️ Игрок ${userId} не зарегистрирован`);
+    
+    // Автоматическая регистрация при первом запросе
+    try {
+      const { player: newPlayer, team } = db.createTeamForPlayer(userId, `Игрок ${userId.substring(0, 6)}`);
+      player = newPlayer;
+      console.log(`   ✅ Автоматическая регистрация игрока ${userId} завершена`);
+    } catch (error) {
+      console.error(`   ❌ ОШИБКА автоматической регистрации игрока ${userId}:`, error.message);
+      res.writeHead(500, { 
+        'Content-Type': 'application/json; charset=utf-8',
+        'Access-Control-Allow-Origin': '*'
+      });
+      res.end(JSON.stringify({ 
+        success: false, 
+        message: 'Ошибка регистрации. Попробуйте обновить страницу или написать /start в боте.',
+        error_code: 'REGISTRATION_FAILED',
+        debug: { userId, error: error.message.substring(0, 100) }
+      }));
+      return;
+    }
+  }
+
+  // ИСПРАВЛЕНО: надёжное получение команды с обработкой ошибок
+  let team = null;
+  try {
+    team = db.getTeamByPlayerId(userId);
+  } catch (error) {
+    console.error(`   ❌ КРИТИЧЕСКАЯ ОШИБКА получения команды для игрока ${userId}:`, error.message);
+    res.writeHead(500, { 
+      'Content-Type': 'application/json; charset=utf-8',
+      'Access-Control-Allow-Origin': '*'
+    });
+    res.end(JSON.stringify({ 
+      success: false, 
+      message: 'Ошибка базы данных. Попробуйте обновить страницу.',
+      error_code: 'DB_TEAM_ERROR',
+      debug: { userId }
+    }));
+    return;
+  }
+
+  if (!team) {
+    console.error(`   ❌ КРИТИЧЕСКАЯ ОШИБКА: команда не найдена для игрока ${userId}`);
+    res.writeHead(500, { 
+      'Content-Type': 'application/json; charset=utf-8',
+      'Access-Control-Allow-Origin': '*'
+    });
+    res.end(JSON.stringify({ 
+      success: false, 
+      message: 'Ошибка команды. Напишите /start в боте для повторной регистрации.',
+      error_code: 'TEAM_NOT_FOUND',
+      debug: { userId }
     }));
     return;
   }
@@ -225,7 +312,78 @@ const server = http.createServer(async (req, res) => {
     try {
       const data = body ? JSON.parse(body) : {};
 
-      // ============ ПРОВЕРКА ПАРОЛЯ ============
+      // Получение задания — КРИТИЧЕСКИ ВАЖНЫЙ ЭНДПОИНТ
+      if (pathname === '/get-mission' && req.method === 'POST') {
+        console.log(`\n📜 [get-mission] Запрос задания для локации "${currentLocation}" от игрока ${userId}`);
+        
+        if (!unlocked.includes(currentLocation)) {
+          res.writeHead(403, { 
+            'Content-Type': 'application/json; charset=utf-8',
+            'Access-Control-Allow-Origin': '*'
+          });
+          res.end(JSON.stringify({ 
+            error: 'access_denied',
+            message: 'Сначала введите пароль доступа к локации' 
+          }));
+          return;
+        }
+        
+        let mission = null;
+        try {
+          mission = db.getMission(currentLocation);
+        } catch (error) {
+          console.error(`   ❌ ОШИБКА получения задания для локации "${currentLocation}":`, error.message);
+          res.writeHead(500, { 
+            'Content-Type': 'application/json; charset=utf-8',
+            'Access-Control-Allow-Origin': '*'
+          });
+          res.end(JSON.stringify({ 
+            error: 'db_error',
+            message: 'Ошибка базы данных. Попробуйте обновить страницу.',
+            debug: { location: currentLocation, error: error.message.substring(0, 100) }
+          }));
+          return;
+        }
+        
+        if (!mission) {
+          res.writeHead(404, { 
+            'Content-Type': 'application/json; charset=utf-8',
+            'Access-Control-Allow-Origin': '*'
+          });
+          res.end(JSON.stringify({ 
+            error: 'mission_not_found',
+            message: 'Задание ещё не настроено администратором' 
+          }));
+          return;
+        }
+        
+        res.writeHead(200, { 
+          'Content-Type': 'application/json; charset=utf-8',
+          'Access-Control-Allow-Origin': '*'
+        });
+        res.end(JSON.stringify({ 
+          success: true,
+          location: currentLocation,
+          locationName: db.locationGraph[currentLocation].name,
+          locationEmoji: db.locationGraph[currentLocation].emoji,
+          mission: {
+            text: mission.text,
+            imageUrl: mission.image_url
+          },
+          team: {
+            id: team.id,
+            name: team.name,
+            completedLocations: JSON.parse(team.completed_locations || '[]').length,
+            totalLocations: 6,
+            hintsUsed: team.hints_used,
+            hintsLeft: 3 - team.hints_used,
+            route: JSON.parse(team.route)
+          }
+        }));
+        return;
+      }
+
+      // Проверка пароля
       if (pathname === '/check-password' && req.method === 'POST') {
         const { password } = data;
         
@@ -267,8 +425,6 @@ const server = http.createServer(async (req, res) => {
         const normalizedInput = db.normalizePassword(cleanInput);
         const isCorrect = normalizedInput === passwordData.normalized;
         
-        console.log(`   🔑 Результат проверки пароля: ${isCorrect ? '✅ ВЕРНО' : '❌ НЕВЕРНО'}`);
-        
         if (isCorrect) {
           db.logEvent('location_unlocked', team.id, currentLocation, { userId });
           res.writeHead(200, { 
@@ -296,65 +452,9 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      // ============ ПОЛУЧЕНИЕ ЗАДАНИЯ ============
-      if (pathname === '/get-mission' && req.method === 'POST') {
-        if (!unlocked.includes(currentLocation)) {
-          res.writeHead(403, { 
-            'Content-Type': 'application/json; charset=utf-8',
-            'Access-Control-Allow-Origin': '*'
-          });
-          res.end(JSON.stringify({ 
-            error: 'access_denied',
-            message: 'Сначала введите пароль доступа к локации' 
-          }));
-          return;
-        }
-        
-        const mission = db.getMission(currentLocation);
-        if (!mission) {
-          res.writeHead(404, { 
-            'Content-Type': 'application/json; charset=utf-8',
-            'Access-Control-Allow-Origin': '*'
-          });
-          res.end(JSON.stringify({ 
-            error: 'mission_not_found',
-            message: 'Задание ещё не настроено администратором' 
-          }));
-          return;
-        }
-        
-        res.writeHead(200, { 
-          'Content-Type': 'application/json; charset=utf-8',
-          'Access-Control-Allow-Origin': '*'
-        });
-        res.end(JSON.stringify({ 
-          success: true,
-          location: currentLocation,
-          locationName: db.locationGraph[currentLocation].name,
-          locationEmoji: db.locationGraph[currentLocation].emoji,
-          mission: {
-            text: mission.text,
-            imageUrl: mission.image_url
-          },
-          team: {
-            id: team.id,
-            name: team.name,
-            completedLocations: JSON.parse(team.completed_locations || '[]').length,
-            totalLocations: 6,
-            hintsUsed: team.hints_used,
-            hintsLeft: 3 - team.hints_used,
-            route: JSON.parse(team.route)
-          }
-        }));
-        return;
-      }
-
-      // ============ ПРОВЕРКА ОТВЕТА С ЗАЩИТОЙ ОТ ПУСТЫХ ОТВЕТОВ ============
+      // Проверка ответа
       if (pathname === '/check-answer' && req.method === 'POST') {
         const { answer } = data;
-        
-        console.log(`\n✅ [ПРОВЕРКА ОТВЕТА] Локация: "${currentLocation}"`);
-        console.log(`   Введённый ответ: "${answer}"`);
         
         if (!answer) {
           res.writeHead(400, { 
@@ -375,11 +475,8 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         
-        // КРИТИЧЕСКАЯ ПРОВЕРКА: ответ должен быть настроен корректно
         if (!mission.normalized_answer || mission.normalized_answer.trim() === '') {
           console.error(`❌ КРИТИЧЕСКАЯ ОШИБКА: Для локации "${currentLocation}" не настроен нормализованный ответ!`);
-          console.error(`   answer в БД: "${mission.answer}"`);
-          console.error(`   normalized_answer в БД: "${mission.normalized_answer}"`);
           
           res.writeHead(500, { 
             'Content-Type': 'application/json; charset=utf-8',
@@ -397,23 +494,9 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         
-        // ДЕТАЛЬНАЯ НОРМАЛИЗАЦИЯ И СРАВНЕНИЕ
-        console.log(`\n🔍 Нормализация ответов:`);
-        console.log(`   Ожидаемый ответ (из БД): "${mission.answer}"`);
-        console.log(`   normalized_answer (из БД): "${mission.normalized_answer}"`);
-        
         const cleanInput = answer.trim();
-        console.log(`   Введённый (после trim): "${cleanInput}"`);
-        
         const normalizedInput = db.normalizeAnswer(cleanInput);
-        console.log(`   Введённый (нормализованный): "${normalizedInput}"`);
-        
         const isCorrect = normalizedInput === mission.normalized_answer;
-        
-        console.log(`\n⚖️ Сравнение:`);
-        console.log(`   Введённый (норм.): "${normalizedInput}" (длина: ${normalizedInput.length})`);
-        console.log(`   Ожидаемый (норм.): "${mission.normalized_answer}" (длина: ${mission.normalized_answer.length})`);
-        console.log(`   Результат: ${isCorrect ? '✅ СОВПАДАЕТ' : '❌ НЕ СОВПАДАЕТ'}`);
         
         if (isCorrect) {
           db.completeLocationForTeam(team.id, currentLocation);
@@ -423,8 +506,6 @@ const server = http.createServer(async (req, res) => {
           const completed = JSON.parse(updatedTeam.completed_locations || '[]');
           const isQuestComplete = completed.length >= 6;
           const nextLocation = db.getNextLocationForTeam(team.id);
-          
-          console.log(`\n🎉 Ответ ВЕРНЫЙ! Локация "${currentLocation}" завершена.`);
           
           res.writeHead(200, { 
             'Content-Type': 'application/json; charset=utf-8',
@@ -444,8 +525,6 @@ const server = http.createServer(async (req, res) => {
         } else {
           db.logEvent('wrong_answer', team.id, currentLocation, { userId, input: answer.trim().substring(0, 20) });
           
-          console.log(`\n❌ Ответ НЕВЕРНЫЙ!`);
-          
           res.writeHead(200, { 
             'Content-Type': 'application/json; charset=utf-8',
             'Access-Control-Allow-Origin': '*'
@@ -463,11 +542,9 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      // ============ ЗАПРОС ПОДСКАЗКИ ============
+      // Запрос подсказки
       if (pathname === '/request-hint' && req.method === 'POST') {
         const { hintLevel = 1 } = data;
-        
-        console.log(`\n💡 Запрос подсказки (уровень ${hintLevel}) для локации "${currentLocation}"`);
         
         if (team.hints_used >= 3) {
           res.writeHead(200, { 
@@ -524,17 +601,28 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({ error: 'Not found' }));
       
     } catch (error) {
-      console.error('❌ Ошибка обработки API-запроса:', error);
+      console.error(`❌ КРИТИЧЕСКАЯ ОШИБКА обработки API-запроса от игрока ${userId}:`, error);
+      console.error('Стек:', error.stack);
+      
       res.writeHead(500, { 
         'Content-Type': 'application/json; charset=utf-8',
         'Access-Control-Allow-Origin': '*'
       });
-      res.end(JSON.stringify({ error: 'Internal server error' }));
+      res.end(JSON.stringify({ 
+        error: 'internal_server_error',
+        message: 'Ошибка сервера. Попробуйте обновить страницу.',
+        debug: { 
+          userId,
+          pathname,
+          error: error.message.substring(0, 200),
+          timestamp: new Date().toISOString()
+        }
+      }));
     }
   });
 });
 
-// ==================== TELEGRAM БОТ — ПОЛНЫЙ КОД С ИСПРАВЛЕННЫМИ ОБРАБОТЧИКАМИ ====================
+// ==================== TELEGRAM БОТ С ЗАЩИТОЙ ОТ ОШИБОК РЕДАКТИРОВАНИЯ ====================
 bot.use((ctx, next) => {
   ctx.isAdmin = ADMIN_USER_IDS.includes(ctx.from?.id);
   ctx.session = getSession(ctx.from?.id);
@@ -589,13 +677,13 @@ bot.start(async (ctx) => {
   );
 });
 
+// ИСПРАВЛЕНО: безопасное редактирование в обработчиках кнопок
 bot.action('admin_panel', async (ctx) => {
   if (!ctx.isAdmin) {
     await ctx.answerCbQuery('Доступ запрещён', { show_alert: true });
     return;
   }
-  await ctx.answerCbQuery();
-  await showAdminMenu(ctx);
+  await showAdminMenu(ctx, true); // true = использовать редактирование
 });
 
 bot.command('admin', async (ctx) => {
@@ -603,7 +691,7 @@ bot.command('admin', async (ctx) => {
     await ctx.replyWithHTML(`🚫 <b>Доступ запрещён</b>\n\nВаш ID: <code>${ctx.from.id}</code>`);
     return;
   }
-  await showAdminMenu(ctx);
+  await showAdminMenu(ctx, false); // false = отправлять новое сообщение
 });
 
 bot.action('team_stats', async (ctx) => {
@@ -626,79 +714,19 @@ bot.action('team_stats', async (ctx) => {
     return `${marker} ${i + 1}. ${db.locationGraph[loc].emoji} ${db.locationGraph[loc].name}`;
   }).join('\n');
   
-  await ctx.answerCbQuery();
-  await ctx.replyWithHTML(
-    `📊 <b>Статистика вашей команды</b>\n\n` +
+  const message = `📊 <b>Статистика вашей команды</b>\n\n` +
     `🛡️ Название: ${team.name}\n` +
     `✅ Пройдено локаций: ${completed}/6\n` +
     `🔓 Открыто локаций: ${unlocked}/6\n` +
     `💡 Осталось подсказок: ${hintsLeft}/3\n\n` +
-    `<b>Ваш маршрут:</b>\n${routeText}`
-  );
+    `<b>Ваш маршрут:</b>\n${routeText}`;
+  
+  // ИСПРАВЛЕНО: используем безопасное редактирование
+  await safeEditMessage(ctx, message, { parse_mode: 'HTML' });
 });
 
-bot.command('stats', async (ctx) => {
-  const player = await db.getPlayer(ctx.from.id);
-  if (!player || !player.is_registered) {
-    await ctx.reply('Сначала зарегистрируйтесь командой /start');
-    return;
-  }
-  
-  const team = db.getTeamByPlayerId(ctx.from.id);
-  const completed = JSON.parse(team.completed_locations || '[]').length;
-  const unlocked = JSON.parse(team.unlocked_locations || '["gates"]').length;
-  const hintsLeft = 3 - team.hints_used;
-  
-  await ctx.replyWithHTML(
-    `📊 <b>Ваша статистика</b>\n\n` +
-    `👤 Игрок: ${player.first_name}\n` +
-    `🛡️ Команда: ${team.name}\n` +
-    `✅ Пройдено локаций: ${completed}/6\n` +
-    `🔓 Открыто локаций: ${unlocked}/6\n` +
-    `💡 Осталось подсказок: ${hintsLeft}/3`
-  );
-});
-
-bot.command('hint', async (ctx) => {
-  const player = await db.getPlayer(ctx.from.id);
-  if (!player || !player.is_registered) {
-    await ctx.reply('Сначала зарегистрируйтесь командой /start');
-    return;
-  }
-  
-  const team = db.getTeamByPlayerId(ctx.from.id);
-  if (team.hints_used >= 3) {
-    await ctx.reply('🚫 У вашей команды закончились подсказки!');
-    return;
-  }
-  
-  const completed = JSON.parse(team.completed_locations || '[]');
-  const nextLocationIndex = completed.length;
-  const currentLocation = Object.keys(db.locationGraph)[nextLocationIndex] || 'gates';
-  
-  const hintLevel = team.hints_used + 1;
-  const hint = await db.getHint(currentLocation, hintLevel);
-  
-  if (!hint) {
-    await ctx.reply('🤔 Подсказка для текущей локации не настроена.');
-    return;
-  }
-  
-  db.db.prepare('UPDATE teams SET hints_used = hints_used + 1, last_activity = CURRENT_TIMESTAMP WHERE id = ?')
-    .run(team.id);
-  
-  await db.logEvent('hint_used', team.id, currentLocation, { userId: ctx.from.id, level: hintLevel });
-  
-  const hintsLeft = 3 - (team.hints_used + 1);
-  
-  await ctx.replyWithHTML(
-    `💡 <b>Подсказка для "${db.locationGraph[currentLocation].name}"</b>\n\n` +
-    `${hint.text}\n\n` +
-    `Осталось подсказок: ${hintsLeft}/3`
-  );
-});
-
-async function showAdminMenu(ctx) {
+// ИСПРАВЛЕНО: безопасное редактирование в админ-меню
+async function showAdminMenu(ctx, useEdit = true) {
   const pwdCount = db.getAllPasswords().length;
   const missionCount = db.getAllMissions().length;
   const hintCount = db.db.prepare('SELECT COUNT(*) as cnt FROM hints').get().cnt;
@@ -712,18 +740,18 @@ async function showAdminMenu(ctx) {
   const keyboard = {
     inline_keyboard: [
       [{ text: '🔑 Пароли доступа', callback_data: 'admin_passwords' }],
-      [{ text: '📝 Задания локаций', callback_data:'admin_missions' }],
-      [{ text: '💡 Подсказки', callback_data:'admin_hints' }],
-      [{ text: '📊 Статистика', callback_data:'admin_stats' }]
+      [{ text: '📝 Задания локаций', callback_data: 'admin_missions' }],
+      [{ text: '💡 Подсказки', callback_data: 'admin_hints' }],
+      [{ text: '📊 Статистика', callback_data: 'admin_stats' }]
     ]
   };
   
-  if (ctx.callbackQuery) {
-    await ctx.editMessageText(message, {
+  if (useEdit && ctx.callbackQuery) {
+    // ИСПРАВЛЕНО: безопасное редактирование вместо прямого вызова
+    await safeEditMessage(ctx, message, {
       parse_mode: 'HTML',
       reply_markup: keyboard
     });
-    await ctx.answerCbQuery();
   } else {
     await ctx.reply(message, {
       parse_mode: 'HTML',
@@ -732,6 +760,7 @@ async function showAdminMenu(ctx) {
   }
 }
 
+// ИСПРАВЛЕНО: все обработчики кнопок используют безопасное редактирование
 bot.action('admin_passwords', async (ctx) => {
   if (!ctx.isAdmin) return;
   
@@ -752,25 +781,24 @@ bot.action('admin_passwords', async (ctx) => {
     inline_keyboard: [
       [
         { text: '🚪 Врата', callback_data: 'set_pwd_gates' },
-        { text: '🛡️ Купол', callback_data:'set_pwd_dome' }
+        { text: '🛡️ Купол', callback_data: 'set_pwd_dome' }
       ],
       [
         { text: '🪞 Зеркало', callback_data: 'set_pwd_mirror' },
-        { text: '🔮 Камень', callback_data:'set_pwd_stone' }
+        { text: '🔮 Камень', callback_data: 'set_pwd_stone' }
       ],
       [
-        { text: '🏠 Хижина', callback_data:'set_pwd_hut' },
-        { text: '👾 Логово', callback_data:'set_pwd_lair' }
+        { text: '🏠 Хижина', callback_data: 'set_pwd_hut' },
+        { text: '👾 Логово', callback_data: 'set_pwd_lair' }
       ],
-      [{ text: '🔙 Назад', callback_data:'admin_main' }]
+      [{ text: '🔙 Назад', callback_data: 'admin_main' }]
     ]
   };
   
-  await ctx.editMessageText(msg, {
+  await safeEditMessage(ctx, msg, {
     parse_mode: 'HTML',
     reply_markup: keyboard
   });
-  await ctx.answerCbQuery();
 });
 
 bot.action(/set_pwd_(.+)/, async (ctx) => {
@@ -813,26 +841,25 @@ bot.action('admin_missions', async (ctx) => {
   const keyboard = {
     inline_keyboard: [
       [
-        { text: '🚪 Врата', callback_data:'set_mission_gates' },
-        { text: '🛡️ Купол', callback_data:'set_mission_dome' }
+        { text: '🚪 Врата', callback_data: 'set_mission_gates' },
+        { text: '🛡️ Купол', callback_data: 'set_mission_dome' }
       ],
       [
         { text: '🪞 Зеркало', callback_data: 'set_mission_mirror' },
-        { text: '🔮 Камень', callback_data:'set_mission_stone' }
+        { text: '🔮 Камень', callback_data: 'set_mission_stone' }
       ],
       [
-        { text: '🏠 Хижина', callback_data:'set_mission_hut' },
+        { text: '🏠 Хижина', callback_data: 'set_mission_hut' },
         { text: '👾 Логово', callback_data: 'set_mission_lair' }
       ],
-      [{ text: '🔙 Назад', callback_data:'admin_main' }]
+      [{ text: '🔙 Назад', callback_data: 'admin_main' }]
     ]
   };
   
-  await ctx.editMessageText(msg, {
+  await safeEditMessage(ctx, msg, {
     parse_mode: 'HTML',
     reply_markup: keyboard
   });
-  await ctx.answerCbQuery();
 });
 
 bot.action(/set_mission_(.+)/, async (ctx) => {
@@ -875,16 +902,15 @@ bot.action('admin_hints', async (ctx) => {
   
   const keyboard = {
     inline_keyboard: [
-      [{ text: '➕ Добавить подсказку', callback_data:'add_hint' }],
-      [{ text: '🔙 Назад', callback_data:'admin_main' }]
+      [{ text: '➕ Добавить подсказку', callback_data: 'add_hint' }],
+      [{ text: '🔙 Назад', callback_data: 'admin_main' }]
     ]
   };
   
-  await ctx.editMessageText(msg, {
+  await safeEditMessage(ctx, msg, {
     parse_mode: 'HTML',
     reply_markup: keyboard
   });
-  await ctx.answerCbQuery();
 });
 
 bot.action('add_hint', async (ctx) => {
@@ -893,18 +919,18 @@ bot.action('add_hint', async (ctx) => {
   const keyboard = {
     inline_keyboard: [
       [
-        { text: '🚪 Врата', callback_data:'hint_loc_gates' },
-        { text: '🛡️ Купол', callback_data:'hint_loc_dome' }
+        { text: '🚪 Врата', callback_data: 'hint_loc_gates' },
+        { text: '🛡️ Купол', callback_data: 'hint_loc_dome' }
       ],
       [
-        { text: '🪞 Зеркало', callback_data:'hint_loc_mirror' },
-        { text: '🔮 Камень', callback_data:'hint_loc_stone' }
+        { text: '🪞 Зеркало', callback_data: 'hint_loc_mirror' },
+        { text: '🔮 Камень', callback_data: 'hint_loc_stone' }
       ],
       [
-        { text: '🏠 Хижина', callback_data:'hint_loc_hut' },
-        { text: '👾 Логово', callback_data:'hint_loc_lair' }
+        { text: '🏠 Хижина', callback_data: 'hint_loc_hut' },
+        { text: '👾 Логово', callback_data: 'hint_loc_lair' }
       ],
-      [{ text: '🔙 Отмена', callback_data:'admin_hints' }]
+      [{ text: '🔙 Отмена', callback_data: 'admin_hints' }]
     ]
   };
   
@@ -951,22 +977,20 @@ bot.action('admin_stats', async (ctx) => {
   
   const keyboard = {
     inline_keyboard: [
-      [{ text: '🔄 Обновить', callback_data:'admin_stats' }],
-      [{ text: '🔙 Назад', callback_data:'admin_main' }]
+      [{ text: '🔄 Обновить', callback_data: 'admin_stats' }],
+      [{ text: '🔙 Назад', callback_data: 'admin_main' }]
     ]
   };
   
-  await ctx.editMessageText(msg, {
+  await safeEditMessage(ctx, msg, {
     parse_mode: 'HTML',
     reply_markup: keyboard
   });
-  await ctx.answerCbQuery();
 });
 
 bot.action('admin_main', async (ctx) => {
   if (!ctx.isAdmin) return;
-  await ctx.answerCbQuery();
-  await showAdminMenu(ctx);
+  await showAdminMenu(ctx, true);
 });
 
 bot.on('text', async (ctx) => {
@@ -990,7 +1014,7 @@ bot.on('text', async (ctx) => {
       
       delete ctx.session.settingType;
       delete ctx.session.location;
-      await showAdminMenu(ctx);
+      await showAdminMenu(ctx, false);
       return;
     }
     
@@ -1007,7 +1031,6 @@ bot.on('text', async (ctx) => {
     }
     
     if (settingType === 'mission' && step === 'answer') {
-      // КРИТИЧЕСКАЯ ПРОВЕРКА: ответ не может быть "-" или пустым
       if (!text || text.trim() === '' || text.trim() === '-') {
         await ctx.replyWithHTML(
           `❌ <b>Ошибка!</b>\n\n` +
@@ -1027,13 +1050,10 @@ bot.on('text', async (ctx) => {
       return;
     }
     
-    // ИСПРАВЛЕНО: используем сохраненный ответ из сессии, а не текущий ввод!
     if (settingType === 'mission' && step === 'image') {
-      // ИСПРАВЛЕНО: только если текст НЕ "-", используем его как URL изображения
       const imageUrl = (text && text.trim() !== '-') ? text.trim() : null;
       
       try {
-        // ИСПРАВЛЕНО: используем сохраненный ответ из сессии (ctx.session.missionAnswer), а не text!
         db.setMission(location, ctx.session.missionText, ctx.session.missionAnswer, imageUrl);
         
         await ctx.replyWithHTML(
@@ -1044,13 +1064,12 @@ bot.on('text', async (ctx) => {
           (imageUrl ? `🖼️ Изображение: ${imageUrl}` : `🖼️ Изображение: не задано`)
         );
         
-        // Очищаем сессию
         delete ctx.session.settingType;
         delete ctx.session.location;
         delete ctx.session.step;
         delete ctx.session.missionText;
         delete ctx.session.missionAnswer;
-        await showAdminMenu(ctx);
+        await showAdminMenu(ctx, false);
       } catch (error) {
         console.error('❌ Ошибка сохранения задания:', error.message);
         await ctx.replyWithHTML(
@@ -1059,13 +1078,12 @@ bot.on('text', async (ctx) => {
           `Пожалуйста, настройте задание заново.`
         );
         
-        // Очищаем сессию при ошибке
         delete ctx.session.settingType;
         delete ctx.session.location;
         delete ctx.session.step;
         delete ctx.session.missionText;
         delete ctx.session.missionAnswer;
-        await showAdminMenu(ctx);
+        await showAdminMenu(ctx, false);
       }
       
       return;
@@ -1101,15 +1119,39 @@ bot.on('text', async (ctx) => {
       delete ctx.session.location;
       delete ctx.session.step;
       delete ctx.session.hintLevel;
-      await showAdminMenu(ctx);
+      await showAdminMenu(ctx, false);
       return;
     }
   }
 });
 
+// ИСПРАВЛЕНО: глобальный обработчик ошибок с фильтрацией "message is not modified"
 bot.catch((err, ctx) => {
+  // Игнорируем ошибку "message is not modified" — она не критична
+  if (err?.response?.description?.includes('message is not modified')) {
+    console.log(`ℹ️ Игнорируем не критичную ошибку "message is not modified" для пользователя ${ctx.from?.id}`);
+    return;
+  }
+  
+  // Игнорируем ошибку "message to edit not found" — сообщение уже удалено
+  if (err?.response?.description?.includes('message to edit not found')) {
+    console.log(`ℹ️ Игнорируем ошибку "message to edit not found" для пользователя ${ctx.from?.id}`);
+    return;
+  }
+  
+  // Все остальные ошибки логируем
   console.error(`⚠️ Ошибка обработки сообщения от ${ctx.from?.id}:`, err.message);
   console.error('Стек:', err.stack);
+  
+  // Отправляем пользователю уведомление об ошибке
+  if (ctx?.from?.id) {
+    ctx.telegram.sendMessage(
+      ctx.from.id,
+      `❌ Произошла ошибка при обработке вашего запроса.\n\n` +
+      `Попробуйте выполнить действие ещё раз или напишите /start для перезапуска квеста.`,
+      { parse_mode: 'HTML' }
+    ).catch(e => console.error('Не удалось отправить сообщение об ошибке:', e.message));
+  }
 });
 
 async function setupWebhook() {
@@ -1134,6 +1176,13 @@ async function setupWebhook() {
 server.listen(PORT, async () => {
   console.log(`✅ HTTP сервер запущен на порту ${PORT}`);
   console.log(`📁 Статические файлы: ${PUBLIC_DIR}`);
+  console.log(`🛡️  SQLite настроен для многопользовательского режима:`);
+  console.log(`   • PRAGMA journal_mode = WAL`);
+  console.log(`   • PRAGMA busy_timeout = 30000ms`);
+  console.log(`   • PRAGMA synchronous = NORMAL`);
+  console.log(`   • PRAGMA temp_store = MEMORY`);
+  console.log(`🛡️  Telegram API: защита от ошибки "message is not modified" ВКЛЮЧЕНА`);
+  console.log(``);
   console.log(`   GET /                 → index.html (фронтенд)`);
   console.log(`   GET /health           → health check`);
   console.log(`   POST /${WEBHOOK_SECRET} → вебхуки Telegram`);
@@ -1141,11 +1190,6 @@ server.listen(PORT, async () => {
   console.log(`   POST /get-mission     → API: получение задания`);
   console.log(`   POST /check-answer    → API: проверка ответа`);
   console.log(`   POST /request-hint    → API: запрос подсказки`);
-  console.log(``);
-  console.log(`🔑 КРИТИЧЕСКИ ВАЖНО:`);
-  console.log(`   • Ответ и изображение сохраняются ОТДЕЛЬНО`);
-  console.log(`   • На шаге "изображение" ответ берётся из сессии, а не из текущего ввода`);
-  console.log(`   • Ответ НЕ перезаписывается ссылкой на картинку`);
   
   await setupWebhook();
   bot.webhookCallback(`/${WEBHOOK_SECRET}`, server);
@@ -1154,6 +1198,7 @@ server.listen(PORT, async () => {
   console.log(`🔧 Админ ID: ${ADMIN_USER_IDS[0]}`);
   console.log(`🌐 Фронтенд URL: ${FRONTEND_URL}`);
   console.log(`✨ Упрощённая регистрация: 1 игрок = 1 команда`);
+  console.log(`👥 Многопользовательский режим: ВКЛЮЧЁН`);
 });
 
 const stop = () => {
