@@ -1,4 +1,4 @@
-// index.js — полная версия с автоматической регистрацией и детальным логированием ошибок
+// index.js — исправленная версия с правильной обработкой запросов и автоматической регистрацией
 import { Telegraf } from 'telegraf';
 import http from 'http';
 import fs from 'fs';
@@ -8,8 +8,8 @@ import { QuestDatabase } from './database.js';
 import 'dotenv/config';
 
 // ==================== КОНФИГУРАЦИЯ ====================
-
 const ADMIN_USER_IDS = process.env.ADMIN_USER_IDS;
+
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const FRONTEND_URL = process.env.FRONTEND_URL;
 const PORT = process.env.PORT || 3000;
@@ -690,7 +690,7 @@ bot.start(async (ctx) => {
         reply_markup: {
           inline_keyboard: [
             [{ text: '🚀 Начать квест', web_app: { url: `${FRONTEND_URL}` } }],
-            [{ text: '📊 Статистика', callback_data: 'team_stats' }]
+            [{ text: '📊 Статистика', callback_data:'team_stats' }]
           ]
         }
       }
@@ -716,7 +716,7 @@ bot.start(async (ctx) => {
       reply_markup: {
         inline_keyboard: [
           [{ text: '🚀 Начать квест', web_app: { url: `${FRONTEND_URL}` } }],
-          [{ text: '📊 Статистика', callback_data: 'team_stats' }]
+          [{ text: '📊 Статистика', callback_data:'team_stats' }]
         ]
       }
     }
@@ -843,10 +843,10 @@ async function showAdminMenu(ctx, useEdit = true) {
   
   const keyboard = {
     inline_keyboard: [
-      [{ text: '🔑 Пароли доступа', callback_data: 'admin_passwords' }],
-      [{ text: '📝 Задания локаций', callback_data: 'admin_missions' }],
-      [{ text: '💡 Подсказки', callback_data: 'admin_hints' }],
-      [{ text: '📊 Статистика', callback_data: 'admin_stats' }]
+      [{ text: '🔑 Пароли доступа', callback_data:'admin_passwords' }],
+      [{ text: '📝 Задания локаций', callback_data:'admin_missions' }],
+      [{ text: '💡 Подсказки', callback_data:'admin_hints' }],
+      [{ text: '📊 Статистика', callback_data:'admin_stats' }]
     ]
   };
   
@@ -882,18 +882,18 @@ bot.action('admin_passwords', async (ctx) => {
   const keyboard = {
     inline_keyboard: [
       [
-        { text: '🚪 Врата', callback_data: 'set_pwd_gates' },
-        { text: '🛡️ Купол', callback_data: 'set_pwd_dome' }
+        { text: '🚪 Врата', callback_data:'set_pwd_gates' },
+        { text: '🛡️ Купол', callback_data:'set_pwd_dome' }
       ],
       [
-        { text: '🪞 Зеркало', callback_data: 'set_pwd_mirror' },
-        { text: '🔮 Камень', callback_data: 'set_pwd_stone' }
+        { text: '🪞 Зеркало', callback_data:'set_pwd_mirror' },
+        { text: '🔮 Камень', callback_data:'set_pwd_stone' }
       ],
       [
-        { text: '🏠 Хижина', callback_data: 'set_pwd_hut' },
-        { text: '👾 Логово', callback_data: 'set_pwd_lair' }
+        { text: '🏠 Хижина', callback_data:'set_pwd_hut' },
+        { text: '👾 Логово', callback_data:'set_pwd_lair' }
       ],
-      [{ text: '🔙 Назад', callback_data: 'admin_main' }]
+      [{ text: '🔙 Назад', callback_data:'admin_main' }]
     ]
   };
   
@@ -943,18 +943,18 @@ bot.action('admin_missions', async (ctx) => {
   const keyboard = {
     inline_keyboard: [
       [
-        { text: '🚪 Врата', callback_data: 'set_mission_gates' },
-        { text: '🛡️ Купол', callback_data: 'set_mission_dome' }
+        { text: '🚪 Врата', callback_data:'set_mission_gates' },
+        { text: '🛡️ Купол', callback_data:'set_mission_dome' }
       ],
       [
-        { text: '🪞 Зеркало', callback_data: 'set_mission_mirror' },
-        { text: '🔮 Камень', callback_data: 'set_mission_stone' }
+        { text: '🪞 Зеркало', callback_data:'set_mission_mirror' },
+        { text: '🔮 Камень', callback_data:'set_mission_stone' }
       ],
       [
-        { text: '🏠 Хижина', callback_data: 'set_mission_hut' },
-        { text: '👾 Логово', callback_data: 'set_mission_lair' }
+        { text: '🏠 Хижина', callback_data:'set_mission_hut' },
+        { text: '👾 Логово', callback_data:'set_mission_lair' }
       ],
-      [{ text: '🔙 Назад', callback_data: 'admin_main' }]
+      [{ text: '🔙 Назад', callback_data:'admin_main' }]
     ]
   };
   
@@ -1004,8 +1004,8 @@ bot.action('admin_hints', async (ctx) => {
   
   const keyboard = {
     inline_keyboard: [
-      [{ text: '➕ Добавить подсказку', callback_data: 'add_hint' }],
-      [{ text: '🔙 Назад', callback_data: 'admin_main' }]
+      [{ text: '➕ Добавить подсказку', callback_data:'add_hint' }],
+      [{ text: '🔙 Назад', callback_data:'admin_main' }]
     ]
   };
   
@@ -1021,18 +1021,18 @@ bot.action('add_hint', async (ctx) => {
   const keyboard = {
     inline_keyboard: [
       [
-        { text: '🚪 Врата', callback_data: 'hint_loc_gates' },
-        { text: '🛡️ Купол', callback_data: 'hint_loc_dome' }
+        { text: '🚪 Врата', callback_data:'hint_loc_gates' },
+        { text: '🛡️ Купол', callback_data:'hint_loc_dome' }
       ],
       [
-        { text: '🪞 Зеркало', callback_data: 'hint_loc_mirror' },
-        { text: '🔮 Камень', callback_data: 'hint_loc_stone' }
+        { text: '🪞 Зеркало', callback_data:'hint_loc_mirror' },
+        { text: '🔮 Камень', callback_data:'hint_loc_stone' }
       ],
       [
-        { text: '🏠 Хижина', callback_data: 'hint_loc_hut' },
-        { text: '👾 Логово', callback_data: 'hint_loc_lair' }
+        { text: '🏠 Хижина', callback_data:'hint_loc_hut' },
+        { text: '👾 Логово', callback_data:'hint_loc_lair' }
       ],
-      [{ text: '🔙 Отмена', callback_data: 'admin_hints' }]
+      [{ text: '🔙 Отмена', callback_data:'admin_hints' }]
     ]
   };
   
@@ -1079,8 +1079,8 @@ bot.action('admin_stats', async (ctx) => {
   
   const keyboard = {
     inline_keyboard: [
-      [{ text: '🔄 Обновить', callback_data: 'admin_stats' }],
-      [{ text: '🔙 Назад', callback_data: 'admin_main' }]
+      [{ text: '🔄 Обновить', callback_data:'admin_stats' }],
+      [{ text: '🔙 Назад', callback_data:'admin_main' }]
     ]
   };
   
