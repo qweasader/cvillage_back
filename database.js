@@ -1,4 +1,4 @@
-// database.js — полная версия с защитой от конфликтов в многопользовательском режиме
+// database.js — исправленная версия с правильной обработкой запросов
 import sqlite3 from 'better-sqlite3';
 
 export class QuestDatabase {
@@ -183,20 +183,23 @@ export class QuestDatabase {
     console.log('='.repeat(80) + '\n');
   }
 
-  // ============ НАДЁЖНАЯ ЗАПИСЬ В БАЗУ ДАННЫХ С ПОВТОРНЫМИ ПОПЫТКАМИ ============
+  // ============ УНИВЕРСАЛЬНЫЕ МЕТОДЫ ЗАПРОСОВ С ПОДДЕРЖКОЙ СТРОК И ПОДГОТОВЛЕННЫХ ЗАПРОСОВ ============
+  prepareQuery(statement) {
+    return typeof statement === 'string' ? this.db.prepare(statement) : statement;
+  }
+
   safeRun(statement, params = [], maxRetries = 3) {
+    const stmt = this.prepareQuery(statement);
+    
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        return statement.run(params);
+        return stmt.run(params);
       } catch (error) {
         if (error.message.includes('SQLITE_BUSY') || error.message.includes('database is locked')) {
           console.warn(`⚠️ Попытка ${attempt}/${maxRetries}: база данных заблокирована, повтор через ${attempt * 100}мс...`);
-          // Ждём с экспоненциальной задержкой
           const delay = attempt * 100;
           const start = Date.now();
-          while (Date.now() - start < delay) {
-            // Активное ожидание
-          }
+          while (Date.now() - start < delay) {}
           
           if (attempt === maxRetries) {
             console.error(`❌ КРИТИЧЕСКАЯ ОШИБКА: база данных заблокирована после ${maxRetries} попыток`);
@@ -211,9 +214,11 @@ export class QuestDatabase {
   }
 
   safeGet(statement, params = [], maxRetries = 3) {
+    const stmt = this.prepareQuery(statement);
+    
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        return statement.get(params);
+        return stmt.get(params);
       } catch (error) {
         if (error.message.includes('SQLITE_BUSY') || error.message.includes('database is locked')) {
           console.warn(`⚠️ Попытка ${attempt}/${maxRetries}: база данных заблокирована (чтение), повтор через ${attempt * 50}мс...`);
@@ -234,9 +239,11 @@ export class QuestDatabase {
   }
 
   safeAll(statement, params = [], maxRetries = 3) {
+    const stmt = this.prepareQuery(statement);
+    
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        return statement.all(params);
+        return stmt.all(params);
       } catch (error) {
         if (error.message.includes('SQLITE_BUSY') || error.message.includes('database is locked')) {
           console.warn(`⚠️ Попытка ${attempt}/${maxRetries}: база данных заблокирована (чтение всех), повтор через ${attempt * 50}мс...`);
