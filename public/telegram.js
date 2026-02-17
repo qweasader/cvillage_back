@@ -430,12 +430,12 @@ class TelegramMiniApp {
 
     getAllLocations() {
         return [
-            { id: 'gates', name: 'Врата Кибердеревни', emoji: '🚪', order: 1 },
-            { id: 'dome', name: 'Купол Защиты', emoji: '🛡️', order: 2 },
-            { id: 'mirror', name: 'Зеркало Истины', emoji: '🪞', order: 3 },
-            { id: 'stone', name: 'Камень Пророчеств', emoji: '🔮', order: 4 },
-            { id: 'hut', name: 'Хижина Хранителя', emoji: '🏠', order: 5 },
-            { id: 'lair', name: 'Логово Вируса', emoji: '👾', order: 6 }
+           { id: 'gates', name: 'Врата Кибердеревни', emoji: '🚪', order: 1 },
+            { id: 'dome', name: 'Односторонний Портал', emoji: '🌀', order: 2 },
+            { id: 'mirror', name: 'Призрачный Мост', emoji: '👻', order: 3 },
+            { id: 'stone', name: 'Логово Паука', emoji: '🕸️', order: 4 },
+            { id: 'hut', name: 'Белый Кролик', emoji: '🐇', order: 5 },
+            { id: 'lair', name: 'Купол Пророчеств', emoji: '🔮', order: 6 }
         ];
     }
 
