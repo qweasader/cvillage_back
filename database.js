@@ -12,11 +12,11 @@ export class QuestDatabase {
   buildLocationGraph() {
     return {
       gates: { name: 'Врата Кибердеревни', emoji: '🚪', next: ['dome', 'hut', 'mirror'], order: 1 },
-      dome: { name: 'Купол Защиты', emoji: '🛡️', next: ['mirror', 'stone', 'hut'], order: 2 },
-      mirror: { name: 'Зеркало Истины', emoji: '🪞', next: ['stone', 'hut', 'lair'], order: 3 },
-      stone: { name: 'Камень Пророчеств', emoji: '🔮', next: ['hut', 'lair'], order: 4 },
-      hut: { name: 'Хижина Хранителя', emoji: '🏠', next: ['lair'], order: 5 },
-      lair: { name: 'Логово Вируса', emoji: '👾', next: [], order: 6 }
+      dome: { name: 'Односторонний Портал', emoji: '🌀', next: ['mirror', 'stone', 'hut'], order: 2 },
+      mirror: { name: 'Призрачный Мост', emoji: '👻', next: ['stone', 'hut', 'lair'], order: 3 },
+      stone: { name: 'Логово Паука', emoji: '🕸️', next: ['hut', 'lair'], order: 4 },
+      hut: { name: 'Белый Кролик', emoji: '🐇', next: ['lair'], order: 5 },
+      lair: { name: 'Купол Пророчеств', emoji: '🔮', next: [], order: 6 }
     };
   }
 
