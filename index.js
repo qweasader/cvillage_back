@@ -944,15 +944,15 @@ bot.action('admin_missions', async (ctx) => {
     inline_keyboard: [
       [
         { text: '🚪 Врата', callback_data:'set_mission_gates' },
-        { text: '🛡️ Купол', callback_data:'set_mission_dome' }
+        { text: '🌀 Портал', callback_data:'set_mission_dome' }
       ],
       [
-        { text: '🪞 Зеркало', callback_data:'set_mission_mirror' },
-        { text: '🔮 Камень', callback_data:'set_mission_stone' }
+        { text: '👻 Мост', callback_data:'set_mission_mirror' },
+        { text: '🕸️ Паук', callback_data:'set_mission_stone' }
       ],
       [
-        { text: '🏠 Хижина', callback_data:'set_mission_hut' },
-        { text: '👾 Логово', callback_data:'set_mission_lair' }
+        { text: '🐇 Кролик', callback_data:'set_mission_hut' },
+        { text: '🔮 Купол', callback_data:'set_mission_lair' }
       ],
       [{ text: '🔙 Назад', callback_data:'admin_main' }]
     ]
@@ -1022,15 +1022,15 @@ bot.action('add_hint', async (ctx) => {
     inline_keyboard: [
       [
         { text: '🚪 Врата', callback_data:'hint_loc_gates' },
-        { text: '🛡️ Купол', callback_data:'hint_loc_dome' }
+        { text: '🌀 Портал', callback_data:'hint_loc_dome' }
       ],
       [
-        { text: '🪞 Зеркало', callback_data:'hint_loc_mirror' },
-        { text: '🔮 Камень', callback_data:'hint_loc_stone' }
+        { text: '👻 Мост', callback_data:'hint_loc_mirror' },
+        { text: '🕸️ Паук', callback_data:'hint_loc_stone' }
       ],
       [
-        { text: '🏠 Хижина', callback_data:'hint_loc_hut' },
-        { text: '👾 Логово', callback_data:'hint_loc_lair' }
+        { text: '🐇 Кролик', callback_data:'hint_loc_hut' },
+        { text: '🔮 Сфера', callback_data:'hint_loc_lair' }
       ],
       [{ text: '🔙 Отмена', callback_data:'admin_hints' }]
     ]
